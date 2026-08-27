@@ -192,6 +192,41 @@ def test_daily_refills_half_written_slot():
            "E158:E163", "F159:F163", "G159:G163"])
 
 
+def test_daily_reuses_slot_by_keyword_not_position():
+    """다른 writer 가 다른 순서로 채웠어도 같은 키워드는 그 자리를 다시 쓴다.
+
+    두 writer 가 각자 스캔하므로 그룹 목록과 순서가 다를 수 있다. 자리로
+    판단하면 같은 키워드가 한 행에 두 번 들어간다 — 슬롯별 검사는 전부
+    통과하므로 어떤 가드에도 안 걸리는 조용한 오염이다.
+    """
+    book = make_daily()
+    fill_slot(book, 4, "2차전지",                      # B 가 아니라 E 에 들어있다
+              [(s["name"], s["rate"], s["amount"]) for s in GROUPS[0]["top5"]])
+    tw.write_daily(book, GROUPS, FRIDAY)
+    starts = [w[0].split(":")[0] for w in book.writes]
+    check("이미 있는 2차전지 자리를 다시 쓰지 않음",
+          [s for s in starts if s.startswith(("E", "F", "G"))], [])
+    check("바이오만 빈 슬롯 B 로", starts, ["B158", "C159", "D159"])
+
+
+def test_daily_no_duplicate_when_orders_differ():
+    """앞선 writer 가 [전선, 2차전지] 로 채웠고 내 스캔은 [2차전지, 바이오] 인 경우."""
+    book = make_daily()
+    fill_slot(book, 1, "전선", [("가온전선", 0.25, 51000)])
+    fill_slot(book, 4, "2차전지",
+              [(s["name"], s["rate"], s["amount"]) for s in GROUPS[0]["top5"]])
+    tw.write_daily(book, GROUPS, FRIDAY)
+    starts = [w[0].split(":")[0] for w in book.writes]
+    check("2차전지를 새 슬롯에 복제하지 않음", starts, ["H158", "I159", "J159"])
+
+    # 대표행에는 키워드 칸 말고 AVERAGEA/SUM 결과 칸도 있으므로, 슬롯의
+    # 첫 열만 골라서 본다.
+    row = book.read_formatted(tw.DAILY_GID, "A158:Z158")[0]
+    keywords = [str(row[s]).strip() for s in (1, 4, 7, 10, 13, 16)
+                if s < len(row) and str(row[s]).strip()]
+    check("한 행에 중복 키워드 없음", sorted(keywords), ["2차전지", "바이오", "전선"])
+
+
 def test_daily_does_not_overwrite_another_keyword():
     """남의 키워드가 든 슬롯은 비켜 가고, 빈 슬롯으로 간다."""
     book = make_daily()
