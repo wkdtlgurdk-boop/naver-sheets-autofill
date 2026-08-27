@@ -162,12 +162,44 @@ def test_daily_never_touches_formula_row():
     check("수식 칸을 건드리지 않음", clash, [])
 
 
-def test_daily_skips_when_already_filled():
+def fill_slot(book, slot, keyword, rows, header_row=157):
+    """가짜 시트에서 슬롯 하나를 온전히 채운다 (대표행 + 종목행들)."""
+    c1, c2, c3 = (tw.col_letter(slot), tw.col_letter(slot + 1), tw.col_letter(slot + 2))
+    book.put(f"{c1}{header_row + 1}", keyword)
+    for i, (n, r, a) in enumerate(rows):
+        book.put(f"{c1}{header_row + 2 + i}", n)
+        book.put(f"{c2}{header_row + 2 + i}", r)
+        book.put(f"{c3}{header_row + 2 + i}", a)
+
+
+def test_daily_skips_fully_filled_slot():
     book = make_daily()
-    book.put("B158", "2차전지")
-    before = len(book.writes)
+    fill_slot(book, 1, "2차전지",
+              [(s["name"], s["rate"], s["amount"]) for s in GROUPS[0]["top5"]])
     tw.write_daily(book, GROUPS, FRIDAY)
-    check("이미 채워졌으면 쓰지 않음", len(book.writes), before)
+    # 1번 슬롯(B)은 손대지 않고 2번 그룹만 E 슬롯에 쓴다.
+    check("완전히 찬 슬롯은 건너뜀", [w[0] for w in book.writes],
+          ["E158:E163", "F159:F163", "G159:G163"])
+
+
+def test_daily_refills_half_written_slot():
+    """20:10 작업이 슬롯 도중에 죽으면 키워드만 남는다. 그건 다시 채워야 한다."""
+    book = make_daily()
+    book.put("B158", "2차전지")          # 키워드만 있고 종목행은 비어 있음
+    tw.write_daily(book, GROUPS, FRIDAY)
+    check("반만 찬 슬롯은 다시 씀", [w[0] for w in book.writes],
+          ["B158:B163", "C159:C163", "D159:D163",
+           "E158:E163", "F159:F163", "G159:G163"])
+
+
+def test_daily_does_not_overwrite_another_keyword():
+    """남의 키워드가 든 슬롯은 비켜 가고, 빈 슬롯으로 간다."""
+    book = make_daily()
+    fill_slot(book, 1, "전선", [("가온전선", 0.25, 51000)])
+    tw.write_daily(book, GROUPS, FRIDAY)
+    starts = [w[0].split(":")[0] for w in book.writes]
+    check("B 슬롯을 건드리지 않음", [s for s in starts if s.startswith("B")], [])
+    check("빈 슬롯 E, H 로 감", [starts[0], starts[3]], ["E158", "H158"])
 
 
 def test_daily_aborts_without_template_formulas():

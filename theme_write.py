@@ -87,20 +87,52 @@ def write_daily(book: Spreadsheet, groups: list[dict], now: datetime) -> list[di
     print(f"  Daily: A{header_row}='{wanted}', 슬롯 {len(slots)}개 "
           f"({', '.join(col_letter(s) for s in slots)})")
 
-    first = col_letter(slots[0])
-    existing = book.read(DAILY_GID, f"{first}{header_row + 1}")
-    if existing and existing[0] and str(existing[0][0]).strip():
-        print(f"  Daily: {first}{header_row + 1} 에 이미 '{existing[0][0]}' 가 있음 "
-              "— 오늘은 이미 기록됨, 건너뜀")
-        return read_daily_totals(book, header_row, slots, len(slots))
+    # 슬롯별 현재 상태를 먼저 본다. 하루 전체를 한 칸으로 판단하면 안 된다 —
+    # 20:10 로컬 작업(과 이 스크립트)은 슬롯을 하나씩 쓰므로 도중에 죽으면
+    # 하루가 반만 찬 채로 남는다. 첫 칸만 보고 "이미 기록됨"으로 건너뛰면
+    # 나머지 슬롯이 영영 비어 있게 된다.
+    kw_row = book.read_formatted(DAILY_GID, f"A{header_row + 1}:Z{header_row + 1}")
+    kw_row = kw_row[0] if kw_row else []
 
-    if len(groups) > len(slots):
-        dropped = [g["keyword"] for g in groups[len(slots):]]
-        print(f"  Daily: 슬롯보다 그룹이 많아 뒤쪽 {len(dropped)}개 제외 — {', '.join(dropped)}")
-    usable = groups[:len(slots)]
+    def keyword_at(slot: int) -> str:
+        return str(kw_row[slot]).strip() if slot < len(kw_row) else ""
 
-    for g, slot in zip(usable, slots):
+    taken = {keyword_at(s): s for s in slots if keyword_at(s)}
+    free = [s for s in slots if not keyword_at(s)]
+    if taken:
+        print(f"  Daily: 이미 채워진 슬롯 {len(taken)}개 — "
+              f"{', '.join(f'{k}@{col_letter(v)}' for k, v in taken.items())}")
+
+    # 같은 키워드가 이미 자리를 잡고 있으면 그 자리를 쓰고, 아니면 빈 자리에
+    # 넣는다. 남의 키워드가 든 슬롯은 절대 덮어쓰지 않는다.
+    plan, dropped = [], []
+    for g in groups:
+        if g["keyword"] in taken:
+            plan.append((g, taken[g["keyword"]]))
+        elif free:
+            plan.append((g, free.pop(0)))
+        else:
+            dropped.append(g["keyword"])
+    if dropped:
+        print(f"  Daily: 빈 슬롯이 없어 {len(dropped)}개 제외 — {', '.join(dropped)}")
+
+    for g, slot in plan:
         c1, c2, c3 = col_letter(slot), col_letter(slot + 1), col_letter(slot + 2)
+
+        # 이 슬롯이 이미 온전히 채워져 있으면 건너뛴다. '온전히'는 이 그룹이
+        # 쓸 종목 수만큼 종목명/상승률/거래대금이 모두 있다는 뜻이다. 반만
+        # 찬 슬롯은 다시 쓴다 — 같은 값을 덮는 것이므로 무해하다.
+        want = len(g["top5"][:STOCK_ROWS])
+        block = book.read(DAILY_GID,
+                          f"{c1}{header_row + 1}:{c3}{header_row + 1 + want}")
+
+        def filled(row_idx: int) -> bool:
+            row = block[row_idx] if row_idx < len(block) else []
+            return len(row) >= 3 and all(str(v).strip() for v in row[:3])
+
+        if keyword_at(slot) == g["keyword"] and all(filled(i) for i in range(1, want + 1)):
+            print(f"    [{g['keyword']}] {c1}{header_row + 1} 이미 완전히 채워짐 — 건너뜀")
+            continue
 
         # 대표행(header_row+1)의 상승률/거래대금 칸에는 AVERAGEA/SUM 수식이
         # 들어 있다. 종목명 칸만 쓰고 나머지 두 칸은 절대 건드리지 않는다.
@@ -127,18 +159,18 @@ def write_daily(book: Spreadsheet, groups: list[dict], now: datetime) -> list[di
         print(f"    [{g['keyword']}] -> {c1}{header_row + 1} "
               f"({len(top)}종목, 1위 {top[0]['name']} {top[0]['rate']:+.2f}%)")
 
-    return read_daily_totals(book, header_row, slots, len(usable))
+    return read_daily_totals(book, header_row, slots)
 
 
-def read_daily_totals(book: Spreadsheet, header_row: int, slots: list[int],
-                      count: int) -> list[dict]:
+def read_daily_totals(book: Spreadsheet, header_row: int,
+                      slots: list[int]) -> list[dict]:
     """대표행이 계산한 평균상승률/거래대금합을 시트에서 그대로 읽어온다.
 
     월간 시트에 이 값을 옮겨 적어야 하는데, 수식 의미를 파이썬에서 다시
     구현하면 언젠가 어긋난다. 시트가 계산한 값을 읽는 편이 항상 일치한다.
     """
     out = []
-    for slot in slots[:count]:
+    for slot in slots:
         c1 = col_letter(slot)
         c3 = col_letter(slot + 2)
         row = book.read(DAILY_GID, f"{c1}{header_row + 1}:{c3}{header_row + 1}")
