@@ -1,0 +1,68 @@
+name: theme-calendar-autofill
+
+on:
+  schedule:
+    # 20:13 KST on weekdays (11:13 UTC). Deliberately off the top of the
+    # hour: GitHub queues scheduled runs globally and :00 is the most
+    # congested minute — the sibling industry-report repo, on "0 8", started
+    # 113-141 minutes late on every one of its scheduled runs.
+    - cron: "13 11 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: theme-calendar
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Scan finance.naver.com's theme pages and merge overlapping themes.
+      # Roughly 40 page fetches, ~10s. Writes final_groups.json.
+      - name: Scan themes
+        run: python theme_scan.py
+
+      - name: Fetch index summary
+        run: python market_summary.py > market_summary.json
+
+      - name: Show what was found
+        run: |
+          python - <<'PY'
+          import json
+          groups = json.load(open("final_groups.json", encoding="utf-8"))
+          print(f"{len(groups)} groups")
+          for g in groups:
+              top = g["top5"][0] if g["top5"] else None
+              head = f"{top['name']} {top['rate']:+.2f}%" if top else "(none)"
+              print(f"  [{g['keyword']}] {len(g['top5'])} stocks, top: {head}")
+          PY
+
+      - name: Write both calendars
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python theme_write.py
+
+      # The scan output is the audit trail for what was written. Keep it
+      # even when the write step fails — that is exactly when it is wanted.
+      - name: Upload scan output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scan-${{ github.run_id }}
+          path: |
+            raw_scan.json
+            final_groups.json
+            final_groups.txt
+            market_summary.json
+          if-no-files-found: warn
+          retention-days: 14

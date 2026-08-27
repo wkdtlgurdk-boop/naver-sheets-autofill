@@ -1,0 +1,7 @@
+raw_scan.json
+final_groups.json
+final_groups.txt
+market_summary.json
+__pycache__/
+*.pyc
+service-account*.json
