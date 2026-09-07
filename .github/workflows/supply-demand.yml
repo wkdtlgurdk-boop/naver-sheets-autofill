@@ -1,0 +1,36 @@
+name: supply-demand-autofill
+
+on:
+  schedule:
+    # 20:10 KST on weekdays (11:10 UTC). The foreign/institution figures are
+    # still marked estimated at 18:00 (measured 2026-09-07) and settled by
+    # 20:05, so this is the earliest hour known to be safe -- not a habit.
+    # Scheduled runs on this repo start 5-13 minutes late, which is fine here.
+    - cron: "10 11 * * 1-5"
+  workflow_dispatch:
+
+concurrency:
+  group: supply-demand
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Writes nothing unless all four blocks (외인/기관 x 코스피/코스닥) come
+      # back final. A holiday or a mid-session run exits 0 without touching the
+      # sheet, so a red run here means something is actually broken.
+      - name: Write supply-demand sheet
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python supply_demand.py
