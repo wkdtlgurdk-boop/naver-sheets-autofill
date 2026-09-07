@@ -13,6 +13,11 @@ concurrency:
   group: theme-calendar
   cancel-in-progress: false
 
+# The run commits the day's keywords.json back so the grouping stays visible
+# and editable in the repo rather than only in a log.
+permissions:
+  contents: write
+
 jobs:
   fill:
     runs-on: ubuntu-latest
@@ -31,6 +36,21 @@ jobs:
       # Roughly 40 page fetches, ~10s. Writes final_groups.json.
       - name: Scan themes
         run: python theme_scan.py
+
+      # Ask Claude to group the day's themes and rewrite keywords.json. The
+      # mechanical merge only sees which stocks moved today, so it splits
+      # themes that are plainly the same industry and labels big groups with
+      # whichever member name is shortest. This step exits 0 without touching
+      # keywords.json when the key is missing or the call fails, so a bad day
+      # here degrades to yesterday's keywords rather than skipping the write.
+      - name: Group themes with Claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python llm_group.py
+
+      # Re-derive the groups under the new keywords, reusing the scan on disk.
+      - name: Regroup
+        run: python theme_scan.py --regroup
 
       - name: Fetch index summary
         run: python market_summary.py > market_summary.json
@@ -51,6 +71,22 @@ jobs:
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: python theme_write.py
+
+      # Keep the day's grouping in the repo so it can be read and corrected.
+      # An edit here steers the next run: theme_scan reads keywords.json on
+      # every pass, and llm_group only rewrites it when its own answer passes
+      # validation. Runs after the write so a failed write never lands a
+      # grouping that was never used.
+      - name: Commit keywords.json
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add keywords.json
+          git diff --cached --quiet && echo "no change" && exit 0
+          git commit -m "Group today's themes ($(TZ=Asia/Seoul date +%Y-%m-%d))"
+          git pull --rebase --autostash origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
 
       # The scan output is the audit trail for what was written. Keep it
       # even when the write step fails — that is exactly when it is wanted.

@@ -170,6 +170,14 @@ def merge_by_overlap(themes):
 
 
 def keyword_for(theme_name, patterns):
+    # Exact names win over substrings, and are checked across every keyword
+    # before any substring is tried. keywords.json holds exact theme names, and
+    # one is often a prefix of another ("LED" and "LED장비"): with substring
+    # matching alone, whichever keyword happened to be checked first would
+    # swallow the longer theme into the wrong group.
+    for keyword, pats in patterns.items():
+        if theme_name in pats:
+            return keyword
     for keyword, pats in patterns.items():
         for p in pats:
             if p in theme_name:
@@ -227,12 +235,23 @@ def build_output(final_groups):
 
 
 def main():
-    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent
+    args = [a for a in sys.argv[1:] if a != "--regroup"]
+    regroup = "--regroup" in sys.argv
+    out_dir = Path(args[0]) if args else Path(__file__).parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    raw = scan_themes()
-    with open(out_dir / "raw_scan.json", "w", encoding="utf-8") as f:
-        json.dump(raw, f, ensure_ascii=False, indent=2)
+    if regroup:
+        # Re-derive the groups from the scan already on disk. llm_group.py
+        # rewrites keywords.json between the two passes, and re-fetching ~40
+        # theme pages to apply it would both waste the runner's time and read
+        # a market that has moved since the first pass.
+        with open(out_dir / "raw_scan.json", encoding="utf-8") as f:
+            raw = json.load(f)
+        print(f"[regroup] reusing raw_scan.json ({len(raw)} themes)", file=sys.stderr)
+    else:
+        raw = scan_themes()
+        with open(out_dir / "raw_scan.json", "w", encoding="utf-8") as f:
+            json.dump(raw, f, ensure_ascii=False, indent=2)
 
     auto_groups = merge_by_overlap(raw)
     final_groups = apply_keyword_overrides(auto_groups)
