@@ -6,14 +6,13 @@
 
 검증에 하나라도 실패하면 아무것도 쓰지 않고 exit 1.
 
-주의 — 이 스크립트는 예약 실행되지 않는다. 수급동향 시트는 별도의 Google Apps
-Script 가 담당하기로 정리됐고(같은 셀에 두 시스템이 쓰면 깨진다), 그래서 이
-리포의 워크플로 중 어느 것도 이 파일을 부르지 않는다. Apps Script 쪽이 끝내
-동작하지 않을 때 쓸 수 있도록 남겨둔 대안이며, 되살리려면 워크플로를 새로
-추가하고 그 전에 Apps Script 트리거를 반드시 먼저 꺼야 한다.
+    python supply_demand.py --dry-run    # 수집·검증만, 시트는 안 건드림
+    python supply_demand.py              # 실제 기록
 """
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 import urllib.parse
 import urllib.request
@@ -27,49 +26,56 @@ SPREADSHEET_ID = "1F3SOlj6ER_JUOjrPdKxQeLWbAuHHf49eiB5xyl0rM7U"
 BASE = "https://stock.naver.com/api/domestic/market/trend/trendForeignOrg"
 HEADERS = {
     "Referer": "https://stock.naver.com/",
-    "User-Agent": "Mozilla/5.0 supply-demand-autofill/2.0",
-    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 supply-demand-autofill/3.0",
 }
 
-# 요일별 '종목' 열 시작 위치.
-# 외인 시트는 종목/수량/금액/거래량 4열, 기관 시트는 종목/(빈칸)/금액 3열을 쓴다.
-DAY_COL = {
-    "외인": {"MON": "B", "TUE": "F", "WED": "J", "THU": "O", "FRI": "S"},
-    "기관": {"MON": "B", "TUE": "G", "WED": "K", "THU": "O", "FRI": "S"},
-}
-SHEET = {
-    "외인": {"gid": 0, "cols": 4, "rows": {"KOSPI": 39, "KOSDAQ": 112}},
-    "기관": {"gid": 1644270427, "cols": 3, "rows": {"KOSPI": 38, "KOSDAQ": 111}},
-}
-INVESTOR = {"외인": "FOREIGNER", "기관": "ORGANIZATION"}
+# 2026-09-02 개편 후 구조. 이전에는 요일마다 열 수가 달랐고(외인 4열·기관 3열)
+# 5종목마다 숨김 3행이 끼어 한 블록이 29행이었다. 지금은 두 시트 모두
+# 종목명/금액(백만원) 2열, 숨김 행 없이 20행 연속이라 요일 간격이 균일하다.
+DAY_COL = {"MON": "B", "TUE": "D", "WED": "F", "THU": "H", "FRI": "J"}
+BLOCK_ROWS = 20
 WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI"]
+
+# rows = '금주' 블록의 첫 데이터 행, prev = 같은 블록의 '전주' 첫 데이터 행.
+# 두 시트의 간격이 다르다 — 외인 쪽 블록 사이에 빈 행이 하나 더 있다.
+# 2026-09-07 실측: 외인 라벨 A28/A74, 기관 A26/A71, 각각 헤더 한 줄 뒤가 데이터.
+SHEET = {
+    "외인": {"gid": 0, "investor": "FOREIGNER",
+             "rows": {"KOSPI": 30, "KOSDAQ": 76},
+             "prev": {"KOSPI": 6, "KOSDAQ": 53}},
+    "기관": {"gid": 1644270427, "investor": "ORGANIZATION",
+             "rows": {"KOSPI": 28, "KOSDAQ": 73},
+             "prev": {"KOSPI": 6, "KOSDAQ": 50}},
+}
+# 요일 5칸 x 2열 = B..K. 회전은 이 폭을 통째로 옮긴다.
+SPAN = ("B", "K")
 
 
 def fetch(investor_type: str, market_type: str) -> list[dict]:
     qs = urllib.parse.urlencode({
-        "investorType": investor_type,
-        "tradeType": "KRX",
-        "marketType": market_type,
-        "startIdx": 0,
-        "pageSize": 20,
-        "periodType": "DAY",
+        "investorType": investor_type, "tradeType": "KRX",
+        "marketType": market_type, "startIdx": 0,
+        "pageSize": BLOCK_ROWS, "periodType": "DAY",
     })
     req = urllib.request.Request(f"{BASE}?{qs}", headers=HEADERS)
     with urllib.request.urlopen(req, timeout=30) as resp:
-        import json
-        data = json.load(resp)
-    return data["sections"]["buyRankList"]
+        return json.load(resp)["sections"]["buyRankList"]
 
 
 def validate(rows: list[dict], today: str, label: str) -> None:
-    """확정치가 아니면 중단. 장중 실행/휴장일/데이터 지연을 여기서 전부 막는다."""
-    if len(rows) < 20:
-        raise SystemExit(f"[중단] {label}: 20종목이 안 됨 ({len(rows)}개)")
+    """확정치가 아니면 중단. 장중 실행·휴장일·데이터 지연을 여기서 전부 막는다.
+
+    장중에는 FOREIGNER 가 estimated=true 에 accTradeAmount=0 인 오늘치를 주고,
+    ORGANIZATION 은 아직 어제 확정치를 준다 — 두 종류가 서로 다른 날짜인 채로
+    시트에 들어가는 것이 제일 나쁜 결과다.
+    """
+    if len(rows) < BLOCK_ROWS:
+        raise SystemExit(f"[중단] {label}: {BLOCK_ROWS}종목이 안 됨 ({len(rows)}개)")
     top = rows[0]
     if top.get("bizdateFrom") != today:
         raise SystemExit(
             f"[중단] {label}: 데이터 날짜가 오늘이 아님 "
-            f"(응답 {top.get('bizdateFrom')}, 오늘 {today}). 휴장일이거나 아직 확정 전."
+            f"(응답 {top.get('bizdateFrom')}, 오늘 {today}). 휴장일이거나 확정 전."
         )
     if top.get("estimated"):
         raise SystemExit(f"[중단] {label}: 장중 추정치(estimated=true). 마감 후 재실행 필요.")
@@ -77,84 +83,82 @@ def validate(rows: list[dict], today: str, label: str) -> None:
         raise SystemExit(f"[중단] {label}: 금액이 0. 확정 전 데이터.")
 
 
-def build_rows(rows: list[dict], cols: int) -> list[list]:
-    """5행 + 숨김 3행 패턴으로 29행 블록 생성 (20종목).
+def to_values(rows: list[dict]) -> list[list]:
+    """종목명 / 금액(백만원) 2열 x 20행."""
+    return [[r["itemname"], round(int(r["accTradeAmount"]) / 1e6)]
+            for r in rows[:BLOCK_ROWS]]
 
-    숫자는 문자열이 아니라 수로 넣는다 — 클립보드 시절엔 '1,234' 같은 서식 문자열을
-    시트가 파싱해줬지만, API로는 수를 그대로 보내는 편이 로케일에 휘둘리지 않는다.
+
+def rotate(book: Spreadsheet, dry: bool) -> None:
+    """월요일: '금주' 블록을 '전주'로 옮기고 '금주'를 비운다.
+
+    로컬판은 이 회전을 위해 매일 쓴 값을 history/ 에 따로 쌓았다 — 클립보드도
+    DOM 도 시트를 되읽지 못해서 옮길 원본이 없었기 때문이다. API 로는 그냥
+    읽어서 쓰면 되므로 이력 파일도, 그 파일이 없는 날 생기는 구멍도 사라진다.
     """
-    blank = [""] * cols
-    out: list[list] = []
-    for i, r in enumerate(rows[:20]):
-        amount = round(int(r["accTradeAmount"]) / 1e6)   # 백만원
-        volume = round(int(r["accTradeVolume"]) / 1000)  # 천주
-        if cols == 4:
-            out.append([r["itemname"], volume, amount, int(r["dailyTradeVolume"])])
-        else:
-            out.append([r["itemname"], "", amount])
-        if i % 5 == 4 and i != 19:
-            out.extend([list(blank) for _ in range(3)])
-    return out
-
-
-def col_shift(col: str, n: int) -> str:
-    """단일 문자 열 이름을 n칸 옮긴다 (이 시트들은 전부 A~Z 범위)."""
-    idx = ord(col) - ord("A") + n
-    if idx > 25:
-        raise SystemExit(f"[중단] 열 범위를 벗어남: {col}+{n}")
-    return chr(ord("A") + idx)
+    c1, c2 = SPAN
+    blank = [["", ""] * 5 for _ in range(BLOCK_ROWS)]
+    for name, cfg in SHEET.items():
+        for market in ("KOSPI", "KOSDAQ"):
+            cur, prev = cfg["rows"][market], cfg["prev"][market]
+            src = f"{c1}{cur}:{c2}{cur + BLOCK_ROWS - 1}"
+            dst = f"{c1}{prev}:{c2}{prev + BLOCK_ROWS - 1}"
+            block = book.read(cfg["gid"], src)
+            # 읽은 격자는 뒤쪽 빈 칸이 잘려 온다. 폭을 다시 채워 넣지 않으면
+            # 전주 칸의 오른쪽 요일이 지난주 값을 그대로 달고 남는다.
+            filled = [(row + [""] * 10)[:10] for row in block]
+            filled += [[""] * 10] * (BLOCK_ROWS - len(filled))
+            print(f"  회전 {name}/{market}: {src} -> {dst} "
+                  f"({sum(1 for r in block if r and str(r[0]).strip())}종목)")
+            if dry:
+                continue
+            book.write(cfg["gid"], dst, filled)
+            book.write(cfg["gid"], src, blank)
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true",
+                    help="수집·검증만 하고 시트는 건드리지 않는다")
+    a = ap.parse_args()
+
     now = datetime.now(KST)
-    today = now.strftime("%Y%m%d")
     if now.weekday() > 4:
         raise SystemExit(f"[중단] 주말({now:%A})이라 실행하지 않음.")
+    today = now.strftime("%Y%m%d")
     weekday = WEEKDAYS[now.weekday()]
+    col = DAY_COL[weekday]
+    print(f"{now:%Y-%m-%d %H:%M} KST — {weekday} ({col}열)"
+          + (" [dry-run]" if a.dry_run else ""))
 
-    # 네트워크 수집과 검증을 먼저 전부 끝낸다. 하나라도 어긋나면
-    # 시트를 한 칸도 건드리지 않은 상태로 죽는 편이 낫다.
-    blocks = []
-    for sheet_name in ("외인", "기관"):
-        cfg = SHEET[sheet_name]
-        col = DAY_COL[sheet_name][weekday]
+    # 네 블록을 모두 받아 검증한 뒤에야 쓰기 시작한다. 하나라도 확정 전이면
+    # 시트를 반만 채우는 것보다 아무것도 안 쓰는 편이 낫다.
+    payload = {}
+    for name, cfg in SHEET.items():
         for market in ("KOSPI", "KOSDAQ"):
-            label = f"{sheet_name}/{market}"
-            rows = fetch(INVESTOR[sheet_name], market)
+            label = f"{name}/{market}"
+            rows = fetch(cfg["investor"], market)
             validate(rows, today, label)
-            start_row = cfg["rows"][market]
-            values = build_rows(rows, cfg["cols"])
-            end_col = col_shift(col, cfg["cols"] - 1)
-            blocks.append({
-                "label": label,
-                "gid": cfg["gid"],
-                "anchor": f"{col}{start_row}",
-                "range": f"{col}{start_row}:{end_col}{start_row + len(values) - 1}",
-                "top_name": rows[0]["itemname"],
-                "values": values,
-            })
-
-    print(f"수집 완료 {today} ({weekday}) — {len(blocks)}개 블록")
+            payload[(name, market)] = to_values(rows)
+            top = rows[0]
+            print(f"  {label}: 1위 {top['itemname']} "
+                  f"{round(int(top['accTradeAmount']) / 1e6):,}백만")
 
     book = Spreadsheet(SPREADSHEET_ID)
-    written = skipped = 0
-    for b in blocks:
-        existing = book.read(b["gid"], b["anchor"])
-        current = existing[0][0] if existing and existing[0] else ""
-        if current and str(current).strip() == b["top_name"]:
-            print(f"  {b['label']:12s} {b['range']:12s} 이미 채워져 있음 (1위={current}) — 건너뜀")
-            skipped += 1
-            continue
-        if current:
-            raise SystemExit(
-                f"[중단] {b['label']}: 앵커 {b['anchor']} 에 예상과 다른 값 '{current}' "
-                f"(오늘 1위는 '{b['top_name']}'). 요일/행 계산이 틀렸거나 수동 입력이 있습니다."
-            )
-        cells = book.write(b["gid"], b["range"], b["values"])
-        print(f"  {b['label']:12s} {b['range']:12s} {cells}칸 기록 (1위={b['top_name']})")
-        written += 1
+    if weekday == "MON":
+        rotate(book, a.dry_run)
 
-    print(f"완료 — 기록 {written}개 블록, 건너뜀 {skipped}개")
+    for (name, market), values in payload.items():
+        cfg = SHEET[name]
+        r0 = cfg["rows"][market]
+        rng = f"{col}{r0}:{chr(ord(col) + 1)}{r0 + BLOCK_ROWS - 1}"
+        if a.dry_run:
+            print(f"  (dry-run) {name}/{market} -> {rng}")
+            continue
+        n = book.write(cfg["gid"], rng, values)
+        print(f"  {name}/{market} -> {rng} ({n}칸)")
+
+    print("완료" if not a.dry_run else "dry-run 종료 — 시트를 건드리지 않았습니다")
     return 0
 
 
