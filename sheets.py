@@ -68,6 +68,45 @@ class Spreadsheet:
                 f"현재 탭: {sorted(self._by_gid.items())}"
             ) from None
 
+    def gid_for_title(self, title: str) -> int | None:
+        """gid by tab title, or None. Titles are what change month to month.
+
+        The reverse of title_for_gid, and the direction this code now works
+        in: a gid recorded in the source outlives the tab it named (the
+        hardcoded DAILY_GID silently pointed at August all through September),
+        whereas a title derived from today's date cannot go stale.
+        """
+        for gid, name in self._by_gid.items():
+            if name == title:
+                return gid
+        return None
+
+    def titles(self) -> list[str]:
+        return sorted(self._by_gid.values())
+
+    def duplicate_tab(self, source_gid: int, new_title: str) -> int:
+        """Copy a tab (merges, formats and formulas included) under a new name.
+
+        Used to open the next month from the Daily template. The copy is made
+        through the API rather than rebuilt cell by cell because the calendar
+        blocks carry merged date cells and percent formats that a value-only
+        write cannot reproduce.
+        """
+        if self.gid_for_title(new_title) is not None:
+            raise SystemExit(f"[중단] '{new_title}' 탭이 이미 있습니다.")
+        resp = self._api.batchUpdate(
+            spreadsheetId=self.id,
+            body={"requests": [{"duplicateSheet": {
+                "sourceSheetId": source_gid,
+                "newSheetName": new_title,
+                "insertSheetIndex": 0,
+            }}]},
+        ).execute()
+        props = resp["replies"][0]["duplicateSheet"]["properties"]
+        gid = int(props["sheetId"])
+        self._by_gid[gid] = props["title"]
+        return gid
+
     @staticmethod
     def _quote(title: str) -> str:
         return "'" + title.replace("'", "''") + "'"
