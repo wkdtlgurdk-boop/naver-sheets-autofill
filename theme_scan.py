@@ -208,14 +208,31 @@ def apply_keyword_overrides(auto_groups):
     for keyword, theme_list in keyword_buckets.items():
         final.append({"keyword": keyword, "themes": theme_list})
     for group in leftover_groups:
-        short_label = min((t["theme_name"] for t in group), key=len)
-        short_label = re.sub(r"\([^)]*\)", "", short_label).strip()
-        final.append({"keyword": short_label, "themes": group})
+        # Label the group after the theme that carries the most of it, not the
+        # one with the shortest name. Eight merged semiconductor themes -- HBM,
+        # 시스템반도체, 온디바이스 AI, SK하이닉스 -- once reached the sheet under
+        # the name "LED" purely because "LED" was the shortest string in the
+        # group, which reads as a different sector entirely. Ties go to the
+        # longer name, which is the more specific one.
+        lead = max(group, key=lambda t: (len(t["qualifying"]), len(t["theme_name"])))
+        label = re.sub(r"\([^)]*\)", "", lead["theme_name"]).strip()
+        final.append({"keyword": label, "themes": group})
     return final
 
 
 def build_output(final_groups):
-    out = []
+    """Pick each group's five stocks, giving no stock to two groups.
+
+    Themes overlap at the stock level even after merging: 서진시스템 belongs to
+    반도체 장비, 스마트폰 and SOFC all at once, and once appeared in three of the
+    day's eight slots. A stock repeated across slots spends the sheet's width
+    on one name and overstates how broad the day was, so the first group to
+    claim it keeps it and later groups fall through to their next-best stock.
+
+    Groups are served in the order they appear on the sheet -- best mover
+    first -- so the claim goes to the group the stock actually led.
+    """
+    pools = []
     for g in final_groups:
         stock_map = {}
         source_names = []
@@ -223,14 +240,35 @@ def build_output(final_groups):
             source_names.append(t["theme_name"])
             for s in t["qualifying"]:
                 stock_map[s["code"]] = s
-        top5 = sorted(stock_map.values(), key=lambda s: -s["rate"])[:5]
-        out.append({
+        pools.append({
             "keyword": g["keyword"],
             "source_themes": sorted(set(source_names)),
             "total_qualifying": len(stock_map),
+            "ranked": sorted(stock_map.values(), key=lambda s: -s["rate"]),
+        })
+
+    pools.sort(key=lambda p: -max((s["rate"] for s in p["ranked"]), default=0))
+
+    taken, out = set(), []
+    for p in pools:
+        top5 = []
+        for s in p["ranked"]:
+            if s["code"] in taken:
+                continue
+            taken.add(s["code"])
+            top5.append(s)
+            if len(top5) == 5:
+                break
+        if not top5:
+            print(f"[WARN] {p['keyword']}: 모든 종목이 다른 그룹에 배정되어 제외",
+                  file=sys.stderr)
+            continue
+        out.append({
+            "keyword": p["keyword"],
+            "source_themes": p["source_themes"],
+            "total_qualifying": p["total_qualifying"],
             "top5": top5,
         })
-    out.sort(key=lambda g: -max((s["rate"] for s in g["top5"]), default=0))
     return out
 
 
