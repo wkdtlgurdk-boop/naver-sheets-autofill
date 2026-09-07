@@ -18,6 +18,14 @@ import os
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
+# Sheets answers 503 often enough to matter for an unattended daily job: the
+# first real run on the runner died on one, halfway through, with the Daily
+# sheet already written and Monthly untouched. execute(num_retries=) retries
+# 5xx with exponential backoff, which turns that class of failure into a pause.
+# Reads and value writes are safe to repeat — every write here overwrites a
+# fixed range with fixed values. Tab creation deliberately does not retry.
+API_RETRIES = 4
+
 # google-api-python-client 는 이 모듈을 실제로 쓸 때만 부른다. 덕분에
 # test_theme_write.py 가 가짜 시트로 돌 때는 구글 라이브러리가 없어도 된다.
 
@@ -53,7 +61,7 @@ class Spreadsheet:
         self._api = build("sheets", "v4", credentials=_credentials(),
                           cache_discovery=False).spreadsheets()
         meta = self._api.get(spreadsheetId=spreadsheet_id,
-                             fields="sheets.properties").execute()
+                             fields="sheets.properties").execute(num_retries=API_RETRIES)
         self._by_gid = {
             s["properties"]["sheetId"]: s["properties"]["title"]
             for s in meta.get("sheets", [])
@@ -117,7 +125,7 @@ class Spreadsheet:
         resp = self._api.values().get(
             spreadsheetId=self.id, range=rng,
             valueRenderOption="UNFORMATTED_VALUE",
-        ).execute()
+        ).execute(num_retries=API_RETRIES)
         return resp.get("values", [])
 
     def read_formatted(self, gid: int, a1: str) -> list[list]:
@@ -131,7 +139,7 @@ class Spreadsheet:
         resp = self._api.values().get(
             spreadsheetId=self.id, range=rng,
             valueRenderOption="FORMATTED_VALUE",
-        ).execute()
+        ).execute(num_retries=API_RETRIES)
         return resp.get("values", [])
 
     def read_formulas(self, gid: int, a1: str) -> list[list]:
@@ -143,7 +151,7 @@ class Spreadsheet:
         rng = f"{self._quote(self.title_for_gid(gid))}!{a1}"
         resp = self._api.values().get(
             spreadsheetId=self.id, range=rng, valueRenderOption="FORMULA",
-        ).execute()
+        ).execute(num_retries=API_RETRIES)
         return resp.get("values", [])
 
     def write(self, gid: int, a1: str, values: list[list]) -> int:
@@ -153,5 +161,5 @@ class Spreadsheet:
             spreadsheetId=self.id, range=rng,
             valueInputOption="USER_ENTERED",
             body={"values": values},
-        ).execute()
+        ).execute(num_retries=API_RETRIES)
         return int(resp.get("updatedCells", 0))
