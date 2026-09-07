@@ -2,11 +2,16 @@ name: theme-calendar-autofill
 
 on:
   schedule:
-    # 20:13 KST on weekdays (11:13 UTC). Deliberately off the top of the
-    # hour: GitHub queues scheduled runs globally and :00 is the most
-    # congested minute — the sibling industry-report repo, on "0 8", started
-    # 113-141 minutes late on every one of its scheduled runs.
-    - cron: "13 11 * * 1-5"
+    # 16:55 KST on weekdays (07:55 UTC). Moved up from 20:13: the figures this
+    # job reads settle right after the 15:30 close (measured 2026-09-07 — the
+    # index page's foreign-net number moved 340bn won at 15:31-15:33 and then
+    # 0.8bn over the next hour), so there is nothing to gain by waiting until
+    # evening, and the Threads bot reads this sheet at 16:20/16:40/17:10.
+    #
+    # Still off the top of the hour. Scheduled runs on this repo have started
+    # 8-13 minutes late, so expect 17:03-17:08 — which only clears the bot's
+    # last attempt. Pull this earlier if the delay eats the margin.
+    - cron: "55 7 * * 1-5"
   workflow_dispatch:
 
 concurrency:
