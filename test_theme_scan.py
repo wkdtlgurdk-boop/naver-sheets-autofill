@@ -100,6 +100,55 @@ def test_label_is_the_biggest_theme_not_the_shortest_name():
     check("큰 테마가 이름", [g["keyword"] for g in final], ["가상긴테마이름"])
 
 
+def test_surge_lowers_the_cap_floor_but_only_for_surges():
+    """20% 넘게 오른 종목은 시총 500억까지 받고, 그 아래는 2000억 그대로.
+
+    9/8 테라뷰(+29.96%, 1,076억)와 빛과전자의 테마 동료들이 여기서 갈린다.
+    완화가 상승률과 무관하게 걸리면 시총 500억대가 5% 오른 것까지 들어와
+    대표주 자리를 채우므로, 두 조건은 반드시 함께 걸려야 한다.
+    """
+    check("급등+중소형 통과", ts.qualifies(29.96, 1076), True)
+    check("급등이어도 500억 미만 탈락", ts.qualifies(29.96, 300), False)
+    check("5%대는 완화 없음", ts.qualifies(5.54, 577), False)
+    check("5%대 대형주는 통과", ts.qualifies(5.54, 4102), True)
+    check("20% 경계 포함", ts.qualifies(20.0, 500), True)
+    check("5% 경계 포함", ts.qualifies(5.0, 2000), True)
+    check("4.9% 는 탈락", ts.qualifies(4.9, 99999), False)
+
+
+def test_theme_list_reads_every_page():
+    """목록은 마지막 페이지가 반복될 때까지 읽는다 — 1페이지 40개가 아니다.
+
+    네이버 목록에는 페이지 링크가 없어서 끝을 셀 수 없고, 범위를 넘기면 같은
+    페이지를 다시 준다. page=1 만 읽던 시절 266개 중 40개(15%)만 스캔했고
+    9/8 에 제약업체 테마가 통째로 빠졌다.
+    """
+    pages = {
+        1: [("1", "가"), ("2", "나")],
+        2: [("3", "다")],
+        3: [("3", "다")],          # 범위 초과 — 마지막 페이지 반복
+    }
+    seen_urls = []
+
+    def fake_fetch(_opener, url):
+        seen_urls.append(url)
+        page = int(url.rsplit("page=", 1)[1])
+        return "".join(
+            f'sise_group_detail.naver?type=theme&no={tid}">{nm}</a>'
+            for tid, nm in pages.get(page, pages[3])
+        )
+
+    real_fetch, real_sleep = ts.fetch, ts.time.sleep
+    ts.fetch, ts.time.sleep = fake_fetch, lambda _s: None
+    try:
+        got = ts.fetch_theme_list(object())
+    finally:
+        ts.fetch, ts.time.sleep = real_fetch, real_sleep
+
+    check("전 페이지 수집", got, [("1", "가"), ("2", "나"), ("3", "다")])
+    check("반복 페이지에서 멈춤", len(seen_urls), 3)
+
+
 def test_exact_theme_name_beats_a_shorter_substring():
     """'LED장비' 가 'LED' 패턴에 먹히지 않는다.
 

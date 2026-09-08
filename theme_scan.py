@@ -1,8 +1,9 @@
 """
 Daily Naver theme scan + merge pipeline.
 
-Scans page 1 of https://finance.naver.com/sise/theme.naver, finds themes with
->=3 stocks that have market cap >= MIN_CAP(억) and change rate >= MIN_RATE(%),
+Scans every page of https://finance.naver.com/sise/theme.naver, finds themes
+with >=3 stocks that clear qualifies() -- cap >= MIN_CAP(억) with rate >=
+MIN_RATE(%), or the relaxed cap >= SURGE_CAP for anything up SURGE_RATE% --
 then merges overlapping themes (overlap coefficient >= MERGE_THRESHOLD) and
 applies a manual keyword override list to combine loosely-related theme
 families (e.g. all COVID/pharma variants under "바이오").
@@ -26,8 +27,11 @@ from pathlib import Path
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 MIN_CAP = 2000       # 억원
 MIN_RATE = 5.0        # %
+SURGE_CAP = 500      # 억원 — 급등주에만 적용하는 완화 문턱
+SURGE_RATE = 20.0     # %
 MIN_COUNT = 3          # qualifying stocks needed for a theme to count
 MERGE_THRESHOLD = 0.6  # overlap coefficient for auto-merge
+MAX_PAGES = 20         # 테마 목록 페이지 상한 (2026-09-08 실측 7페이지)
 
 # Keyword override: any theme whose name matches (substring) one of these
 # patterns gets folded into the given keyword group, taking priority over
@@ -81,6 +85,54 @@ def fetch(opener, url):
     return raw.decode("euc-kr", errors="ignore")
 
 
+def qualifies(rate, cap):
+    """오늘 이 종목이 자기 테마를 대표할 만한가.
+
+    문턱이 둘이다. 평소에는 시총 2000억 이상이 5% 넘게 오른 경우지만,
+    20% 넘게 오른 종목은 시총 500억까지 받는다.
+
+    단일 시총 문턱은 두 번 작동해서, 대표종목을 고를 때만이 아니라 테마가
+    살아 있는지 셀 때도 걸린다. 9/8 광통신 테마는 5% 넘게 오른 종목이 실제로
+    둘이었는데(빛과전자 +30.00%/4,102억, 한국첨단소재 +5.54%/577억) 시총이
+    하나를 지워 MIN_COUNT 1/3 으로 탈락했다 — 상한가 종목을 낀 테마가
+    통째로 사라진 것이다. 급등 구간에서 도는 중소형주가 그날 시장이 실제로
+    반응한 곳이므로, 그 구간에서만 시총을 낮춰 센다.
+    """
+    if rate >= SURGE_RATE and cap >= SURGE_CAP:
+        return True
+    return rate >= MIN_RATE and cap >= MIN_CAP
+
+
+def fetch_theme_list(opener):
+    """테마 목록 전 페이지를 (theme_id, name) 순서대로 돌려준다.
+
+    예전에는 page 파라미터 없이 한 번만 받았는데 그건 첫 40개일 뿐이고 전체는
+    266개다(2026-09-08 실측) — 15%만 보고 있었다. 그날 제약업체·LED·마이크로
+    LED·5G 가 전부 2페이지 밖이라, 현대약품(+23.99%)과 광전자(+15.37%)가
+    조건을 넉넉히 넘고도 스캔 대상에조차 들지 못했다.
+
+    목록 페이지에 페이지 링크가 없어서(실측: 정규식으로 뽑히는 page 링크 0개)
+    끝을 페이지 수로 알 수 없다. 대신 마지막 페이지를 넘기면 네이버가 같은
+    페이지를 다시 주므로, 신규 테마가 하나도 없으면 끝으로 본다.
+    """
+    pat = re.compile(
+        r'sise_group_detail\.naver\?type=theme&no=(\d+)">([^<]+)</a>')
+    seen, order = set(), []
+    for page in range(1, MAX_PAGES + 1):
+        html = fetch(opener, f"https://finance.naver.com/sise/theme.naver?&page={page}")
+        new = [(tid, name) for tid, name in pat.findall(html) if tid not in seen]
+        if not new:
+            break
+        for tid, name in new:
+            seen.add(tid)
+            order.append((tid, name))
+        time.sleep(0.12)
+    else:
+        print(f"[WARN] 테마 목록이 {MAX_PAGES}페이지에서 끊겼다 — 더 있을 수 있다",
+              file=sys.stderr)
+    return order
+
+
 def scan_themes():
     cj = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
@@ -89,11 +141,8 @@ def scan_themes():
     fetch(opener, "https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no=593")
     fetch(opener, "https://finance.naver.com/sise/field_submit.naver?menu=theme&returnUrl=http%3A%2F%2Ffinance.naver.com%2Fsise%2Fsise_group_detail.naver%3Ftype%3Dtheme%26no%3D593&fieldIds=amount&fieldIds=market_sum")
 
-    theme_list_html = fetch(opener, "https://finance.naver.com/sise/theme.naver")
-    themes = re.findall(
-        r'sise_group_detail\.naver\?type=theme&no=(\d+)">([^<]+)</a>',
-        theme_list_html,
-    )
+    themes = fetch_theme_list(opener)
+    print(f"themes listed: {len(themes)}", file=sys.stderr)
 
     name_pat = re.compile(r'<a href="/item/main\.naver\?code=([0-9A-Za-z]{6})">([^<]*)</a>')
     rate_pat = re.compile(r'class="tah p11[^"]*">\s*([+\-]?[\d,.]+)%\s*</span>')
@@ -124,7 +173,7 @@ def scan_themes():
                 rate = float(rate_str.replace(",", ""))
                 cap = int(cap_str)
                 amount = int(amount_str)
-                if cap >= MIN_CAP and rate >= MIN_RATE:
+                if qualifies(rate, cap):
                     qualifying.append({"name": name, "code": code, "rate": rate, "cap": cap, "amount": amount})
         else:
             print(f"[WARN] {theme_name}: parse count mismatch "
