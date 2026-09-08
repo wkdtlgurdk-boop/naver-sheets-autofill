@@ -2,16 +2,21 @@ name: theme-calendar-autofill
 
 on:
   schedule:
-    # 17:10 KST on weekdays (08:10 UTC). Moved up from 20:13: the figures this
-    # job reads settle right after the 15:30 close (measured 2026-09-07 — the
-    # index page's foreign-net number moved 340bn won at 15:31-15:33 and then
-    # 0.8bn over the next hour), so there is nothing to gain by waiting until
-    # evening. The Threads bot that reads this sheet runs at 21:00, which
-    # leaves the write plenty of room even at the worst delay seen here.
+    # Lands at 16:00 KST on weekdays. The figures this job reads settle right
+    # after the 15:30 close (measured 2026-09-07 — the index page's foreign-net
+    # number moved 340bn won at 15:31-15:33 and then 0.8bn over the next hour),
+    # so 16:00 is early enough to be safe and leaves the card bot room.
     #
-    # Still off the top of the hour: scheduled runs on this repo have started
-    # 8-13 minutes late, so expect roughly 17:18-17:23.
-    - cron: "10 8 * * 1-5"
+    # 06:55 UTC, not 07:00, and the difference is the point. Scheduled runs on
+    # this repo start 5-13 minutes late (measured 2026-09-07: 5:08 and 12:45),
+    # so :55 arrives around 16:00-16:08 KST. Asking for 07:00 would not arrive
+    # at 16:00 — it would arrive later, and the top of the hour is where the
+    # worst delays on record sit (a sibling repo's "0 8" runs came in 113-141
+    # minutes late and skipped a day outright). Never move this to :00.
+    #
+    # The card bot fires at 16:40 local and publishes at 17:00, so even the
+    # slowest run seen here still lands the sheet with half an hour to spare.
+    - cron: "55 6 * * 1-5"
   workflow_dispatch:
 
 concurrency:
@@ -38,7 +43,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       # Scan finance.naver.com's theme pages and merge overlapping themes.
-      # Roughly 40 page fetches, ~10s. Writes final_groups.json.
+      # All 266 themes, so ~270 page fetches, 67s measured. Writes final_groups.json.
       - name: Scan themes
         run: python theme_scan.py
 
