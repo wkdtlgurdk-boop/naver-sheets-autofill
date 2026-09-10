@@ -5,3 +5,4 @@ market_summary.json
 __pycache__/
 *.pyc
 service-account*.json
+cards/

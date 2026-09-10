@@ -57,7 +57,51 @@ exclusions.json     스캔에서 뺄 테마·종목 — 사용자가 직접 고�
 test_theme_scan.py  그룹 배정·제외 규칙 검증
 test_llm_group.py   제외 기록 검증
 test_theme_write.py 가짜 시트로 행/열 계산 검증 (인증 불필요)
+cards.py            final_groups.json -> 스레드용 카드 PNG (1080x1350)
+post_threads.py     카드를 스레드에 캐러셀로 게시
+test_cards.py       카드 레이아웃을 원본 카드 실측값에 대조
 ```
+
+## 카드 봇 (`cards.py` / `post_threads.py`)
+
+예전 카드 봇은 사용자 PC 안에만 있었다. 그 PC 가 그래픽카드 고장으로 켜지지
+않게 되면서 **코드가 통째로 사라졌다** — `theme_bot` 리포에는 결과 PNG 만
+올라와 있었고, 드라이브에도 백업이 없었다. 그래서 남아 있는 2026-09-04/07/08
+카드를 픽셀 단위로 재서 다시 만들었다. 색·여백·행 간격·글자 크기는 전부 그
+이미지에서 뽑은 값이고, `test_cards.py` 가 매 실행 그 좌표에 대조한다.
+
+이제 PC 와 무관하게 GitHub Actions 에서 돈다. 시트를 쓴 다음 이어서:
+
+```
+final_groups.json + market_summary.json
+  -> cards.py        01_monthly.png + 테마별 카드 (거래대금 순)
+  -> theme_bot 리포   공개 URL 확보 (raw.githubusercontent.com)
+  -> post_threads.py  캐러셀 한 건으로 게시
+```
+
+카드는 시트를 읽지 않고 `final_groups.json` 에서 직접 그린다. 시트 쓰기가
+실패한 날에도 카드는 나가고, 둘이 같은 원본을 쓰므로 숫자가 어긋날 일이 없다.
+평균상승률·거래대금의 정의는 시트 대표행의 `AVERAGEA`/`SUM` 과 같다.
+
+**`theme_bot` 이 public 인 이유**는 스레드 API 가 이미지 업로드를 받지 않고
+공개 URL 을 가져가기 때문이다. 그 리포는 코드가 없는 순수 이미지 호스트다.
+
+### 필요한 시크릿 (셋 다 없어도 파이프라인은 안 죽는다)
+
+| 시크릿 | 없으면 | 만드는 법 |
+|---|---|---|
+| `CARD_REPO_TOKEN` | 카드를 공개 리포에 안 올림 (실행 아티팩트에는 남음) | GitHub → Settings → Developer settings → Personal access tokens → Fine-grained. `theme_bot` 리포에 **Contents: Read and write** 만 준다 |
+| `THREADS_USER_ID` | 게시 건너뜀 | 아래 참조 |
+| `THREADS_ACCESS_TOKEN` | 게시 건너뜀 | 아래 참조 |
+
+스레드 토큰은 <https://developers.facebook.com/> 에서 앱을 만들고 **Threads API**
+제품을 추가한 뒤, `threads_basic` + `threads_content_publish` 권한으로 받는다.
+받은 단기 토큰은 장기 토큰(60일)으로 교환해 둘 것 — 짧은 토큰을 넣으면 하루
+이틀 뒤 조용히 게시가 멈춘다. `THREADS_USER_ID` 는 `GET
+https://graph.threads.net/v1.0/me?fields=id&access_token=...` 로 확인한다.
+
+**토큰은 60일마다 만료된다.** 만료돼도 카드는 계속 리포에 쌓이고 게시만
+멈추며, 실행 로그에 `[threads] 게시 건너뜀` 이 남는다.
 
 ## 낡은 테마와 안 맞는 종목 (`exclusions.json`)
 
@@ -155,5 +199,10 @@ test_theme_write.py 가짜 시트로 행/열 계산 검증 (인증 불필요)
   테마가 목록에 적힐 때까지 계속 올라온다.
 - `keywords.json` 은 매 실행 통째로 다시 쓰인다. 여기 손으로 적은 그룹은
   다음 실행에 사라진다. 오래 가야 하는 판단은 `exclusions.json` 에 적을 것.
+- 카드 글꼴이 원본과 다르다. 원본은 Pretendard 계열로 보이는데 러너에서
+  받을 수 있는 건 Noto Sans CJK 라, 줄 위치와 높이는 같지만 글자 폭이 3~5%
+  좁다. 똑같이 맞추려면 폰트 파일을 리포에 넣어야 한다(라이선스 확인 필요).
+- 스레드 장기 토큰은 60일이다. 갱신을 자동화하지 않았다 — 만료되면 게시만
+  조용히 멈추므로, 두 달에 한 번 로그를 보거나 토큰을 새로 넣어야 한다.
 - `supply_demand.py` 는 예약 실행되지 않는다. 수급동향 시트는 별도의 Apps
   Script 가 담당한다 — 파일 안 설명 참조.
