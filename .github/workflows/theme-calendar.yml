@@ -42,6 +42,15 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # The grouping and exclusion rules fail quietly when they fail -- a theme
+      # that was filtered out looks the same as a theme that did not move. 20
+      # seconds here beats reading it off the sheet a day later.
+      - name: Run logic tests
+        run: |
+          python test_theme_scan.py
+          python test_llm_group.py
+          python test_theme_write.py
+
       # Scan finance.naver.com's theme pages and merge overlapping themes.
       # All 266 themes, so ~270 page fetches, 67s measured. Writes final_groups.json.
       - name: Scan themes
@@ -82,17 +91,18 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: python theme_write.py
 
-      # Keep the day's grouping in the repo so it can be read and corrected.
-      # An edit here steers the next run: theme_scan reads keywords.json on
-      # every pass, and llm_group only rewrites it when its own answer passes
-      # validation. Runs after the write so a failed write never lands a
-      # grouping that was never used.
-      - name: Commit keywords.json
+      # Keep the day's grouping and exclusions in the repo so they can be read
+      # and corrected. An edit steers the next run: theme_scan reads both files
+      # on every pass, llm_group only rewrites keywords.json when its own answer
+      # passes validation, and it only ever appends to exclusions.json -- a line
+      # a person wrote or deleted there stays that way. Runs after the write so
+      # a failed write never lands a grouping that was never used.
+      - name: Commit keywords.json and exclusions.json
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add keywords.json
+          git add keywords.json exclusions.json
           git diff --cached --quiet && echo "no change" && exit 0
           git commit -m "Group today's themes ($(TZ=Asia/Seoul date +%Y-%m-%d))"
           git pull --rebase --autostash origin ${{ github.ref_name }}

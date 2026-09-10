@@ -4,9 +4,10 @@ Daily Naver theme scan + merge pipeline.
 Scans every page of https://finance.naver.com/sise/theme.naver, finds themes
 with >=3 stocks that clear qualifies() -- cap >= MIN_CAP(억) with rate >=
 MIN_RATE(%), or the relaxed cap >= SURGE_CAP for anything up SURGE_RATE% --
-then merges overlapping themes (overlap coefficient >= MERGE_THRESHOLD) and
-applies a manual keyword override list to combine loosely-related theme
-families (e.g. all COVID/pharma variants under "바이오").
+drops what filter_themes() rejects (exclusions.json plus the participation
+floor), then merges overlapping themes (overlap coefficient >=
+MERGE_THRESHOLD) and applies a manual keyword override list to combine
+loosely-related theme families (e.g. all COVID/pharma variants under "바이오").
 
 Usage:
     python scan_and_merge.py [output_dir]
@@ -32,6 +33,8 @@ SURGE_RATE = 20.0     # %
 MIN_COUNT = 3          # qualifying stocks needed for a theme to count
 MERGE_THRESHOLD = 0.6  # overlap coefficient for auto-merge
 MAX_PAGES = 20         # 테마 목록 페이지 상한 (2026-09-08 실측 7페이지)
+PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
+MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 
 # Keyword override: any theme whose name matches (substring) one of these
 # patterns gets folded into the given keyword group, taking priority over
@@ -55,6 +58,15 @@ KEYWORD_PATTERNS = {
 # picked up on the next run. Edit it on GitHub, or locally and push.
 KEYWORD_FILE = Path(__file__).with_name("keywords.json")
 
+# 스캔에서 아예 빼는 것들. 네이버 테마 목록은 한 번 만들어지면 지워지지
+# 않아서 '일본 수출규제'(2019) 같은 옛 이벤트 테마가 그대로 남아 있고, 그
+# 안의 종목이 오늘 다른 이유로 오르면 옛 이름이 슬롯을 차지한다. 종목 구성도
+# 같이 낡는다 — 통신 사업을 접은 회사가 통신 테마에 남아 있고, 수소 회사가
+# 조선기자재에 들어 있다. 둘 다 이름과 사업 내용을 알아야 하는 판단이라
+# 규칙으로 못 쓰고, 사람이 읽고 고치는 목록으로 둔다. llm_group.py 가 매일
+# 후보를 여기에 덧붙이되, 사람이 적은 항목은 건드리지 않는다.
+EXCLUSION_FILE = Path(__file__).with_name("exclusions.json")
+
 
 def load_keyword_overrides():
     patterns = {k: list(v) for k, v in KEYWORD_PATTERNS.items()}
@@ -76,6 +88,129 @@ def load_keyword_overrides():
             if t not in patterns[kw]:
                 patterns[kw].append(t)
     return patterns
+
+
+def load_exclusions(path=None):
+    """exclusions.json 을 {"themes": [...], "stocks": [...]} 로 읽는다.
+
+    파일이 없거나 깨져 있으면 빈 목록이다 — 제외는 있으면 좋은 것이지
+    없으면 멈춰야 하는 것이 아니다.
+    """
+    path = path or EXCLUSION_FILE
+    empty = {"themes": [], "stocks": []}
+    if not path.exists():
+        return empty
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[WARN] could not read {path.name}: {e}", file=sys.stderr)
+        return empty
+    return {"themes": list(data.get("themes") or []),
+            "stocks": list(data.get("stocks") or [])}
+
+
+def theme_exclusion(theme_name, rules):
+    """이 테마를 빼라는 규칙. 없으면 None.
+
+    패턴은 부분 문자열이다. 네이버의 정식 테마명은 괄호가 붙어 길고
+    ('일본 수출규제(국산화)'), 사람이 목록을 적을 때 그 표기를 정확히
+    옮겨 적기를 기대하면 조용히 안 걸린다.
+    """
+    for rule in rules:
+        pat = str(rule.get("pattern") or rule.get("name") or "").strip()
+        if pat and pat in theme_name:
+            return rule
+    return None
+
+
+def stock_exclusion(stock, theme_name, rules):
+    """이 종목을 이 테마에서 빼라는 규칙. 없으면 None.
+
+    themes 를 지정하면 그 테마들에서만 뺀다. 범한퓨얼셀은 조선기자재에
+    있을 이유가 없지만 연료전지 테마에서는 대표종목이 맞다 — 전역으로
+    빼면 정작 맞는 자리에서도 사라진다. themes 가 없거나 "*" 이면 전역.
+    code 가 적혀 있으면 코드로, 없으면 종목명으로 맞춘다.
+    """
+    for rule in rules:
+        code = str(rule.get("code") or "").strip()
+        name = str(rule.get("name") or "").strip()
+        if code:
+            if code != stock.get("code"):
+                continue
+        elif not name or name != stock.get("name"):
+            continue
+        pats = rule.get("themes") or ["*"]
+        if any(p == "*" or str(p) in theme_name for p in pats):
+            return rule
+    return None
+
+
+def participation(theme):
+    """구성종목 중 PARTICIPATION_RATE 이상 오른 비율. 셀 수 없으면 None.
+
+    member_count 는 2026-09-10 에 추가됐다. 그 전에 만들어진
+    raw_scan.json 을 --regroup 으로 다시 돌리면 없으므로, 모르면
+    거르지 않는다 (없는 값으로 테마를 죽이지 않는다).
+    """
+    members = theme.get("member_count")
+    if not members:
+        return None
+    return theme.get("up_count", 0) / members
+
+
+def why_excluded(rule):
+    return str(rule.get("reason") or "이유 없음")
+
+
+def filter_themes(raw, exclusions=None):
+    """오늘의 테마로 볼 수 없는 것들을 떨어뜨린다.
+
+    세 가지가 순서대로 걸린다.
+
+    1) 제외 목록의 테마 — 이름만으로 아는 옛 이벤트 테마.
+    2) 제외 목록의 종목 — 그 테마의 성격과 안 맞는 종목. 빼고 나면 남은
+       수가 MIN_COUNT 에 못 미칠 수 있고, 그러면 테마째 빠진다. 그게 맞다:
+       엉뚱한 종목 둘을 빼고 나면 애초에 테마가 움직인 게 아니었다는 뜻이다.
+    3) 참여율 — 구성종목 40개 중 3개만 오른 테마는 테마가 움직인 게 아니라
+       그 3개가 움직인 것이다. 낡고 비대한 테마가 정확히 이 모양이라, 이름을
+       몰라도 여기서 걸린다. 반대로 작고 뜨거운 테마는 비율이 높아 남는다.
+
+    제외는 전부 stderr 로 남긴다. 조용히 사라지는 게 제일 나쁘다.
+    """
+    ex = exclusions if exclusions is not None else load_exclusions()
+    theme_rules, stock_rules = ex.get("themes", []), ex.get("stocks", [])
+
+    kept = []
+    for t in raw:
+        name = t["theme_name"]
+        rule = theme_exclusion(name, theme_rules)
+        if rule:
+            print(f"[제외] 테마 '{name}' — {why_excluded(rule)}", file=sys.stderr)
+            continue
+
+        qualifying = []
+        for s in t["qualifying"]:
+            srule = stock_exclusion(s, name, stock_rules)
+            if srule:
+                print(f"[제외] {s['name']} @ '{name}' — {why_excluded(srule)}",
+                      file=sys.stderr)
+                continue
+            qualifying.append(s)
+        if len(qualifying) < MIN_COUNT:
+            print(f"[제외] 테마 '{name}' — 종목을 빼고 나니 {len(qualifying)}종목 "
+                  f"(MIN_COUNT {MIN_COUNT})", file=sys.stderr)
+            continue
+
+        share = participation(t)
+        if share is not None and share < MIN_PARTICIPATION:
+            print(f"[제외] 테마 '{name}' — 구성 {t['member_count']}종목 중 "
+                  f"{t.get('up_count', 0)}개만 {PARTICIPATION_RATE:.0f}% 이상 상승 "
+                  f"({share:.0%} < {MIN_PARTICIPATION:.0%})", file=sys.stderr)
+            continue
+
+        kept.append(dict(t, qualifying=qualifying))
+    return kept
 
 
 def fetch(opener, url):
@@ -164,13 +299,18 @@ def scan_themes():
         caps = nums[1::2]
 
         qualifying = []
+        member_rates = []
         if len(codes_names) == len(rates) == len(caps) == len(amounts):
             for (code, name), rate_str, amount_str, cap_str in zip(codes_names, rates, amounts, caps):
                 cap_str = cap_str.replace(",", "")
                 amount_str = amount_str.replace(",", "")
+                rate = float(rate_str.replace(",", ""))
+                # 참여율은 조건 통과 여부와 무관하게 구성종목 전체로 센다.
+                # 시총이 작아 대표주가 못 되는 종목도 테마가 움직였는지를
+                # 말해주는 표는 던진다.
+                member_rates.append(rate)
                 if not cap_str.isdigit() or not amount_str.isdigit():
                     continue
-                rate = float(rate_str.replace(",", ""))
                 cap = int(cap_str)
                 amount = int(amount_str)
                 if qualifies(rate, cap):
@@ -181,7 +321,14 @@ def scan_themes():
                   file=sys.stderr)
 
         if len(qualifying) >= MIN_COUNT:
-            results.append({"theme_name": theme_name, "theme_id": theme_id, "qualifying": qualifying})
+            results.append({
+                "theme_name": theme_name,
+                "theme_id": theme_id,
+                "member_count": len(member_rates),
+                "up_count": sum(1 for r in member_rates if r >= PARTICIPATION_RATE),
+                "avg_rate": round(sum(member_rates) / len(member_rates), 2) if member_rates else None,
+                "qualifying": qualifying,
+            })
         time.sleep(0.12)
 
     return results
@@ -339,6 +486,13 @@ def main():
         raw = scan_themes()
         with open(out_dir / "raw_scan.json", "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)
+
+    # raw_scan.json 은 거른 뒤가 아니라 거르기 전을 담는다. 제외가 오늘 무엇을
+    # 지웠는지 나중에 확인하려면 지워지기 전 모습이 남아 있어야 한다.
+    scanned = len(raw)
+    raw = filter_themes(raw)
+    print(f"[filter] {scanned}개 중 {len(raw)}개 통과 "
+          f"({scanned - len(raw)}개 제외)", file=sys.stderr)
 
     auto_groups = merge_by_overlap(raw)
     final_groups = apply_keyword_overrides(auto_groups)

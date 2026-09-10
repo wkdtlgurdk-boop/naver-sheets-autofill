@@ -25,9 +25,14 @@ def stock(name, rate):
     return {"name": name, "code": name, "rate": rate, "cap": 5000, "amount": 100}
 
 
-def theme(name, stocks):
-    return {"theme_name": name, "theme_id": name,
-            "qualifying": [stock(n, r) for n, r in stocks]}
+def theme(name, stocks, members=None, up=None):
+    """가짜 테마. members/up 을 주면 참여율 필터가 볼 수 있는 형태가 된다."""
+    t = {"theme_name": name, "theme_id": name,
+         "qualifying": [stock(n, r) for n, r in stocks]}
+    if members is not None:
+        t["member_count"] = members
+        t["up_count"] = len(stocks) if up is None else up
+    return t
 
 
 def group(keyword, themes):
@@ -158,6 +163,109 @@ def test_exact_theme_name_beats_a_shorter_substring():
     patterns = {"대표주": ["LED"], "장비": ["LED장비"]}
     check("정확 일치 우선", ts.keyword_for("LED장비", patterns), "장비")
     check("정확 일치 자기 자신", ts.keyword_for("LED", patterns), "대표주")
+
+
+def test_stale_theme_never_reaches_a_group():
+    """제외 목록에 적힌 테마는 부분 문자열로 걸려 통째로 빠진다.
+
+    네이버의 정식 이름은 '일본 수출규제(국산화)' 처럼 괄호가 붙는다. 목록에
+    적는 사람이 그 표기를 정확히 옮길 거라고 보면 조용히 안 걸린다.
+    """
+    ex = {"themes": [{"pattern": "일본 수출규제", "reason": "2019년 이벤트"}],
+          "stocks": []}
+    kept = ts.filter_themes([
+        theme("일본 수출규제(국산화)", [("가", 9.0), ("나", 8.0), ("다", 7.0)]),
+        theme("반도체 장비", [("라", 9.0), ("마", 8.0), ("바", 7.0)]),
+    ], ex)
+    check("옛 테마만 빠짐", [t["theme_name"] for t in kept], ["반도체 장비"])
+
+
+def test_stock_is_dropped_only_from_the_theme_it_does_not_fit():
+    """범한퓨얼셀은 조선기자재에서만 빠지고 연료전지에서는 남는다.
+
+    전역으로 빼면 정작 그 종목이 진짜로 대표하는 테마에서도 사라진다.
+    """
+    ex = {"themes": [], "stocks": [
+        {"name": "범한퓨얼셀", "themes": ["조선"], "reason": "수소 쪽"}]}
+    kept = ts.filter_themes([
+        theme("조선기자재", [("범한퓨얼셀", 20.0), ("가", 9.0), ("나", 8.0), ("다", 7.0)]),
+        theme("연료전지", [("범한퓨얼셀", 20.0), ("라", 9.0), ("마", 8.0)]),
+    ], ex)
+    names = {t["theme_name"]: [s["name"] for s in t["qualifying"]] for t in kept}
+    check("조선기자재에서는 빠짐", names["조선기자재"], ["가", "나", "다"])
+    check("연료전지에는 남음", names["연료전지"], ["범한퓨얼셀", "라", "마"])
+
+
+def test_stock_without_themes_is_dropped_everywhere():
+    ex = {"themes": [], "stocks": [{"name": "피노", "reason": "통신 아님"}]}
+    kept = ts.filter_themes([
+        theme("통신장비", [("피노", 20.0), ("가", 9.0), ("나", 8.0), ("다", 7.0)]),
+    ], ex)
+    check("전역 제외", [s["name"] for s in kept[0]["qualifying"]], ["가", "나", "다"])
+
+
+def test_theme_dies_when_exclusions_take_it_below_min_count():
+    """엉뚱한 종목 둘을 빼고 나면 애초에 테마가 움직인 게 아니었다."""
+    ex = {"themes": [], "stocks": [
+        {"name": "피노", "reason": "통신 아님"},
+        {"name": "범한퓨얼셀", "themes": ["통신"], "reason": "수소 쪽"}]}
+    kept = ts.filter_themes([
+        theme("통신장비", [("피노", 20.0), ("범한퓨얼셀", 18.0), ("가", 9.0)]),
+    ], ex)
+    check("테마째 빠짐", kept, [])
+
+
+def test_wide_stale_theme_with_a_few_movers_is_dropped():
+    """구성 40종목 중 3개만 오른 테마는 테마가 움직인 게 아니다.
+
+    이름을 모르는 옛 테마도 대개 이 모양으로 걸린다 — 종목은 많고 그중
+    몇 개만 오늘 각자의 이유로 오른다. 제외 목록이 이름을 못 따라가도
+    여기서 한 겹 걸러진다.
+    """
+    empty = {"themes": [], "stocks": []}
+    wide = theme("옛날테마", [("가", 9.0), ("나", 8.0), ("다", 7.0)], members=40, up=3)
+    tight = theme("오늘테마", [("라", 9.0), ("마", 8.0), ("바", 7.0)], members=8, up=6)
+    kept = ts.filter_themes([wide, tight], empty)
+    check("좁고 뜨거운 것만 남음", [t["theme_name"] for t in kept], ["오늘테마"])
+
+
+def test_participation_floor_is_skipped_when_the_count_is_unknown():
+    """member_count 가 없는 옛 raw_scan.json 을 죽이지 않는다.
+
+    --regroup 은 디스크에 있는 스캔을 다시 읽는다. 2026-09-10 이전 스캔에는
+    구성종목 수가 없고, 모르는 값으로 테마를 지우면 그날 시트가 얇아진다.
+    """
+    empty = {"themes": [], "stocks": []}
+    old = theme("옛스캔", [("가", 9.0), ("나", 8.0), ("다", 7.0)])
+    check("모르면 통과", [t["theme_name"] for t in ts.filter_themes([old], empty)],
+          ["옛스캔"])
+
+
+def test_filter_does_not_mutate_the_scan_it_was_given():
+    """raw_scan.json 은 거르기 전을 담는다 — 제외가 무엇을 지웠는지 남아야 한다."""
+    ex = {"themes": [], "stocks": [{"name": "피노", "reason": "통신 아님"}]}
+    src = [theme("통신장비", [("피노", 20.0), ("가", 9.0), ("나", 8.0), ("다", 7.0)])]
+    ts.filter_themes(src, ex)
+    check("원본 그대로", [s["name"] for s in src[0]["qualifying"]],
+          ["피노", "가", "나", "다"])
+
+
+def test_shipped_exclusion_file_is_readable():
+    """리포에 든 exclusions.json 이 실제로 파싱되고 규칙이 걸린다."""
+    ex = ts.load_exclusions()
+    check("테마 규칙 있음", bool(ex["themes"]), True)
+    check("종목 규칙 있음", bool(ex["stocks"]), True)
+    check("일 수출규제가 걸림",
+          bool(ts.theme_exclusion("일본 수출규제(국산화)", ex["themes"])), True)
+    check("5G 가 걸림",
+          bool(ts.theme_exclusion("5G(5세대 이동통신)", ex["themes"])), True)
+    check("반도체 장비는 안 걸림",
+          ts.theme_exclusion("반도체 장비", ex["themes"]), None)
+    beomhan = {"name": "범한퓨얼셀", "code": "382900"}
+    check("범한퓨얼셀 @ 조선기자재 걸림",
+          bool(ts.stock_exclusion(beomhan, "조선기자재", ex["stocks"])), True)
+    check("범한퓨얼셀 @ 연료전지 안 걸림",
+          ts.stock_exclusion(beomhan, "연료전지", ex["stocks"]), None)
 
 
 def main() -> int:

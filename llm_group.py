@@ -11,6 +11,13 @@
 그래서 이 단계만 모델에게 맡기고, 결과는 사람이 읽고 고칠 수 있는
 keywords.json 으로 남긴다 — 다음 실행에 그대로 반영된다.
 
+같은 이유로 두 가지를 더 맡긴다. 네이버 테마 목록은 지워지지 않아서 옛
+이벤트 테마('일본 수출규제', '5G')가 남아 있고, 테마의 종목 구성도 낡는다
+(통신 사업을 접은 회사가 통신 테마에, 수소 회사가 조선기자재에). 둘 다
+이름과 사업 내용을 알아야 하는 판단이라 모델이 후보를 고르고, 결과는
+exclusions.json 에 쌓인다 — 사람이 지우거나 더할 수 있고, 사람이 적은
+항목을 이 단계가 덮어쓰지 않는다.
+
 안전 원칙: 이 단계는 절대 파이프라인을 죽이지 않는다. 키가 없거나 호출이
 실패하거나 응답이 검증을 통과하지 못하면, 기존 keywords.json 을 그대로 두고
 정상 종료한다. 그러면 기계적 병합이 어제까지의 키워드로 돌아간다.
@@ -20,12 +27,18 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import theme_scan as ts
+
+KST = timezone(timedelta(hours=9))
 
 MODEL = "claude-opus-5"
 HERE = Path(__file__).parent
 RAW = HERE / "raw_scan.json"
 KEYWORDS = HERE / "keywords.json"
+EXCLUSIONS = ts.EXCLUSION_FILE
 
 # 시트의 하루 블록이 가진 슬롯 수. 그룹이 이보다 많으면 뒤쪽이 잘린다.
 TARGET_GROUPS = 8
@@ -51,7 +64,24 @@ SYSTEM = """\
 - 그룹은 8개 이하가 되도록 묶으세요. 그보다 많으면 시트에서 잘립니다.
 - 종목이 겹치지 않고 산업도 다르면 억지로 묶지 마세요. 서로 다른 테마를
   합치면 그룹의 평균상승률이 의미를 잃습니다.
-- reason 은 왜 묶었는지 한 문장. 사람이 이 판단을 검토할 때 읽습니다."""
+- reason 은 왜 묶었는지 한 문장. 사람이 이 판단을 검토할 때 읽습니다.
+
+묶는 것과 별개로, 두 가지를 더 골라 주세요. 둘 다 비워도 됩니다.
+
+stale_themes — 지금의 시장 테마가 아니라 지난 사건의 잔재인 테마.
+네이버의 테마 목록은 한 번 만들어지면 지워지지 않아서 몇 해 전 이벤트가
+그대로 남아 있습니다. 예: '일본 수출규제'(2019년 한일 무역분쟁),
+'5G'(2019~2020년 상용화). 이런 테마는 안의 종목이 오늘 각자의 이유로
+올랐을 뿐인데 옛 이름이 하루의 슬롯을 차지합니다. 반대로 이름이 오래됐어도
+지금 그 산업이 실제로 도는 테마는 (예: '반도체 장비') 고르지 마세요.
+확신이 없으면 고르지 마세요 — 한 번 넣으면 다음 실행부터 계속 빠집니다.
+
+misfit_stocks — 그 테마 안에 있지만 지금 사업 내용이 테마와 안 맞는 종목.
+테마의 종목 구성도 같이 낡습니다. 예: 통신 사업을 접은 회사가 통신 테마에
+남아 있거나, 수소 회사가 조선기자재에 들어 있는 경우. 지목한 테마에서만
+빠지고 다른 테마에서는 그대로 남으므로, 그 종목이 진짜로 속한 테마를
+같이 적어 주세요(belongs). 오늘 많이 올랐다는 이유로 고르지 마세요 —
+사업 내용이 안 맞을 때만입니다."""
 
 SCHEMA = {
     "type": "object",
@@ -68,11 +98,43 @@ SCHEMA = {
                 "required": ["keyword", "source_themes", "reason"],
                 "additionalProperties": False,
             },
-        }
+        },
+        "stale_themes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "theme": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["theme", "reason"],
+                "additionalProperties": False,
+            },
+        },
+        "misfit_stocks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "stock": {"type": "string"},
+                    "theme": {"type": "string"},
+                    "belongs": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["stock", "theme", "belongs", "reason"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["groups"],
+    "required": ["groups", "stale_themes", "misfit_stocks"],
     "additionalProperties": False,
 }
+
+# 하루에 새로 제외할 수 있는 테마 수의 상한. 제외는 다음 실행부터 계속
+# 유효하므로, 모델이 한 번 크게 헛짚으면 그날 하루가 아니라 그 뒤가 전부
+# 얇아진다. 오늘 테마의 3분의 1을 넘게 지우자고 하면 판단이 아니라 오작동에
+# 가까우므로 통째로 버린다.
+STALE_SHARE_CAP = 3
 
 
 def give_up(why: str) -> int:
@@ -83,12 +145,28 @@ def give_up(why: str) -> int:
 
 
 def describe(raw: list[dict]) -> str:
+    """테마 한 줄씩. 조건 통과 종목과 함께 테마 전체가 얼마나 움직였는지 붙인다.
+
+    통과 종목만 보여주면 어느 테마든 오른 종목만 늘어놓은 것으로 보인다.
+    구성 40종목 중 3개만 오른 테마와 8종목 중 6개가 오른 테마는 화면에서
+    같아 보이지만 전자는 테마가 움직인 게 아니다 — stale_themes 판단에
+    필요한 정보라 같이 준다.
+    """
     lines = []
     for t in raw:
         stocks = ", ".join(
             f"{s['name']}({s['rate']:+.1f}%)" for s in t["qualifying"]
         )
-        lines.append(f"- {t['theme_name']}: {stocks}")
+        members = t.get("member_count")
+        if members:
+            head = (f"{t['theme_name']} [구성 {members}종목 중 "
+                    f"{t.get('up_count', 0)}개 상승")
+            if t.get("avg_rate") is not None:
+                head += f", 평균 {t['avg_rate']:+.1f}%"
+            head += "]"
+        else:
+            head = t["theme_name"]
+        lines.append(f"- {head}: {stocks}")
     return "\n".join(lines)
 
 
@@ -123,6 +201,105 @@ def validate(groups: list[dict], known: set[str]) -> list[dict]:
     return out
 
 
+def validate_exclusions(stale: list[dict], misfits: list[dict],
+                       raw: list[dict]) -> tuple[list[dict], list[dict]]:
+    """제외 제안에서 오늘 스캔에 실제로 있는 것만 남긴다.
+
+    validate() 와 같은 이유다 — 모델이 이름을 살짝 바꿔 적으면 제외가
+    아무것도 안 걸리거나(무해), 반대로 엉뚱한 이름이 패턴이 되어 다른
+    테마를 부분 문자열로 잡아먹는다(유해). 후자를 막는다.
+    """
+    by_theme = {t["theme_name"]: {s["name"] for s in t["qualifying"]} for t in raw}
+
+    ok_stale = []
+    for item in stale:
+        name = str(item.get("theme") or "").strip()
+        if name not in by_theme:
+            print(f"[llm_group] 무시: 제외 후보 '{name}' 는 오늘 스캔에 없는 테마입니다.",
+                  file=sys.stderr)
+            continue
+        ok_stale.append({"theme": name, "reason": str(item.get("reason") or "").strip()})
+
+    if len(ok_stale) > max(1, len(raw) // STALE_SHARE_CAP):
+        print(f"[llm_group] 제외 후보가 {len(ok_stale)}개 — 오늘 테마 {len(raw)}개의 "
+              f"1/{STALE_SHARE_CAP} 을 넘어 전부 무시합니다.", file=sys.stderr)
+        ok_stale = []
+
+    ok_misfits = []
+    for item in misfits:
+        theme = str(item.get("theme") or "").strip()
+        stock = str(item.get("stock") or "").strip()
+        if theme not in by_theme:
+            print(f"[llm_group] 무시: '{stock}' 의 테마 '{theme}' 가 오늘 스캔에 없습니다.",
+                  file=sys.stderr)
+            continue
+        if stock not in by_theme[theme]:
+            print(f"[llm_group] 무시: '{theme}' 의 조건 충족 종목에 '{stock}' 이 없습니다.",
+                  file=sys.stderr)
+            continue
+        ok_misfits.append({
+            "stock": stock, "theme": theme,
+            "belongs": str(item.get("belongs") or "").strip(),
+            "reason": str(item.get("reason") or "").strip(),
+        })
+    return ok_stale, ok_misfits
+
+
+def record_exclusions(stale: list[dict], misfits: list[dict], today: str) -> int:
+    """제외 목록에 덧붙인다. 사람이 적은 항목은 그대로 둔다.
+
+    keywords.json 은 매 실행 통째로 다시 쓰지만 이 파일은 그러면 안 된다.
+    제외는 '이 회사는 이제 통신 회사가 아니다' 같은 사실의 기록이라 하루
+    스캔 결과보다 오래 간다. 사람이 지우면 지워진 채로 두고(다시 제안되면
+    다시 붙는다 — 그건 모델이 같은 판단을 되풀이한다는 뜻이므로 보이는 게
+    낫다), 새 항목만 뒤에 붙인다.
+    """
+    # 파일을 통째로 들고 있다가 themes/stocks 만 갈아 끼운다. 사람이 파일에
+    # 적어둔 다른 키(설명 주석 등)를 이 단계가 지우지 않게 하려는 것이다.
+    try:
+        doc = json.loads(EXCLUSIONS.read_text(encoding="utf-8")) if EXCLUSIONS.exists() else {}
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"[llm_group] {EXCLUSIONS.name} 을 읽지 못해 제외를 기록하지 않습니다: {exc}",
+              file=sys.stderr)
+        return 0
+    if not isinstance(doc, dict):
+        print(f"[llm_group] {EXCLUSIONS.name} 의 최상위가 객체가 아닙니다 — 건너뜁니다.",
+              file=sys.stderr)
+        return 0
+    data = ts.load_exclusions(EXCLUSIONS)
+    themes, stocks = data["themes"], data["stocks"]
+    added = 0
+
+    for item in stale:
+        name = item["theme"]
+        # 이미 걸리는 테마면 다시 적지 않는다. 정확히 같은 이름이 아니라
+        # 기존 패턴에 걸리는지를 본다 — '5G' 가 이미 있으면 '5G(5세대
+        # 이동통신)' 을 또 넣을 이유가 없다.
+        if ts.theme_exclusion(name, themes):
+            continue
+        themes.append({"pattern": name, "reason": item["reason"],
+                       "by": "llm", "added": today})
+        added += 1
+
+    for item in misfits:
+        stock = {"name": item["stock"], "code": ""}
+        if ts.stock_exclusion(stock, item["theme"], stocks):
+            continue
+        reason = item["reason"]
+        if item["belongs"]:
+            reason = f"{reason} (실제로는 {item['belongs']} 쪽)"
+        stocks.append({"name": item["stock"], "themes": [item["theme"]],
+                       "reason": reason, "by": "llm", "added": today})
+        added += 1
+
+    if not added:
+        return 0
+    doc["themes"], doc["stocks"] = themes, stocks
+    EXCLUSIONS.write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return added
+
+
 def main() -> int:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         return give_up("ANTHROPIC_API_KEY 가 없습니다")
@@ -132,6 +309,16 @@ def main() -> int:
     raw = json.loads(RAW.read_text(encoding="utf-8"))
     if not raw:
         return give_up("오늘 조건을 충족한 테마가 0개입니다")
+
+    # theme_scan 이 그룹을 만들 때와 같은 목록을 본다. 이미 제외된 테마를
+    # 모델에게 보여주면 그것까지 묶으려 들고, 그 그룹은 regroup 단계에서
+    # 조용히 사라진다 — 모델이 오늘의 슬롯을 헛되이 쓴 셈이 된다.
+    scanned = len(raw)
+    raw = ts.filter_themes(raw)
+    if not raw:
+        return give_up(f"제외 후 남은 테마가 0개입니다 (스캔 {scanned}개)")
+    if scanned != len(raw):
+        print(f"[llm_group] 제외 적용: {scanned}개 -> {len(raw)}개", file=sys.stderr)
     known = {t["theme_name"] for t in raw}
 
     try:
@@ -163,7 +350,10 @@ def main() -> int:
 
     try:
         text = next(b.text for b in resp.content if b.type == "text")
-        groups = validate(json.loads(text)["groups"], known)
+        answer = json.loads(text)
+        groups = validate(answer["groups"], known)
+        stale, misfits = validate_exclusions(
+            answer.get("stale_themes") or [], answer.get("misfit_stocks") or [], raw)
     except (StopIteration, json.JSONDecodeError, KeyError, TypeError) as exc:
         return give_up(f"응답을 읽지 못했습니다: {type(exc).__name__}: {exc}")
 
@@ -184,6 +374,17 @@ def main() -> int:
               file=sys.stderr)
     print(f"[llm_group] keywords.json {'변경됨' if payload != before else '동일'}",
           file=sys.stderr)
+
+    # 제외는 keywords.json 을 쓴 다음에 기록한다. 앞에서 죽으면 오늘 그룹도
+    # 없는 것이고, 그때 제외만 남기면 다음 실행이 이유 모를 구멍을 안고 시작한다.
+    for item in stale:
+        print(f"[llm_group] 제외 제안(테마): {item['theme']} — {item['reason']}",
+              file=sys.stderr)
+    for item in misfits:
+        print(f"[llm_group] 제외 제안(종목): {item['stock']} @ {item['theme']} — "
+              f"{item['reason']}", file=sys.stderr)
+    added = record_exclusions(stale, misfits, datetime.now(KST).strftime("%Y-%m-%d"))
+    print(f"[llm_group] exclusions.json 에 {added}건 추가", file=sys.stderr)
     print(f"[llm_group] usage: in={resp.usage.input_tokens} "
           f"out={resp.usage.output_tokens}", file=sys.stderr)
     return 0
