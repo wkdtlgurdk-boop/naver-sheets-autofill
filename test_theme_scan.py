@@ -121,37 +121,49 @@ def test_surge_lowers_the_cap_floor_but_only_for_surges():
     check("4.9% 는 탈락", ts.qualifies(4.9, 99999), False)
 
 
-def test_theme_list_reads_every_page():
-    """목록은 마지막 페이지가 반복될 때까지 읽는다 — 1페이지 40개가 아니다.
-
-    네이버 목록에는 페이지 링크가 없어서 끝을 셀 수 없고, 범위를 넘기면 같은
-    페이지를 다시 준다. page=1 만 읽던 시절 266개 중 40개(15%)만 스캔했고
-    9/8 에 제약업체 테마가 통째로 빠졌다.
-    """
-    pages = {
-        1: [("1", "가"), ("2", "나")],
-        2: [("3", "다")],
-        3: [("3", "다")],          # 범위 초과 — 마지막 페이지 반복
-    }
+def fake_list(pages):
+    """가짜 목록 페이지로 fetch_theme_list 를 돌리고 (결과, 요청수) 를 돌려준다."""
     seen_urls = []
 
     def fake_fetch(_opener, url):
         seen_urls.append(url)
         page = int(url.rsplit("page=", 1)[1])
+        last = pages[max(pages)]
         return "".join(
             f'sise_group_detail.naver?type=theme&no={tid}">{nm}</a>'
-            for tid, nm in pages.get(page, pages[3])
+            for tid, nm in pages.get(page, last)   # 범위 초과 = 마지막 페이지 반복
         )
 
     real_fetch, real_sleep = ts.fetch, ts.time.sleep
     ts.fetch, ts.time.sleep = fake_fetch, lambda _s: None
     try:
-        got = ts.fetch_theme_list(object())
+        return ts.fetch_theme_list(object()), len(seen_urls)
     finally:
         ts.fetch, ts.time.sleep = real_fetch, real_sleep
 
-    check("전 페이지 수집", got, [("1", "가"), ("2", "나"), ("3", "다")])
-    check("반복 페이지에서 멈춤", len(seen_urls), 3)
+
+def test_theme_list_stops_at_the_page_limit():
+    """목록은 SCAN_PAGES 페이지에서 끊는다.
+
+    네이버 목록은 전일대비 등락률 내림차순이라 앞쪽이 오늘 움직인 테마다.
+    끝까지(7페이지, 266개) 읽으면 뒤쪽은 대부분 옛 테마이거나 구성종목 몇
+    개만 각자 오른 것들이고, 상세 페이지 요청만 세 배로 든다.
+    """
+    pages = {1: [("1", "가"), ("2", "나")], 2: [("3", "다")], 3: [("4", "라")]}
+    got, calls = fake_list(pages)
+    check("두 페이지까지만", got, [("1", "가"), ("2", "나"), ("3", "다")])
+    check("세 번째 페이지는 안 부름", calls, ts.SCAN_PAGES)
+
+
+def test_theme_list_stops_early_when_a_page_repeats():
+    """페이지가 상한보다 적으면 반복 페이지에서 멈춘다.
+
+    목록에는 페이지 링크가 없어서 끝을 셀 수 없고, 범위를 넘기면 네이버가
+    같은 페이지를 다시 준다.
+    """
+    got, calls = fake_list({1: [("1", "가"), ("2", "나")]})
+    check("한 페이지가 전부", got, [("1", "가"), ("2", "나")])
+    check("반복을 확인하는 한 번만 더", calls, 2)
 
 
 def test_exact_theme_name_beats_a_shorter_substring():
@@ -215,6 +227,56 @@ def test_theme_dies_when_exclusions_take_it_below_min_count():
     check("테마째 빠짐", kept, [])
 
 
+def test_keyword_exclusion_removes_every_theme_under_it():
+    """시트에 뜨는 건 키워드라, 키워드로 지목해도 그 아래 테마가 다 빠진다."""
+    patterns = {"5G": ["5G(5세대 이동통신)", "통신장비"], "반도체": ["반도체 장비"]}
+    ex = {"themes": [], "keywords": [{"keyword": "5G", "reason": "옛 테마"}],
+          "stocks": []}
+    kept = ts.filter_themes([
+        theme("5G(5세대 이동통신)", [("가", 9.0), ("나", 8.0), ("다", 7.0)]),
+        theme("통신장비", [("라", 9.0), ("마", 8.0), ("바", 7.0)]),
+        theme("반도체 장비", [("사", 9.0), ("아", 8.0), ("자", 7.0)]),
+    ], ex, patterns)
+    check("키워드 아래가 전부 빠짐", [t["theme_name"] for t in kept], ["반도체 장비"])
+
+
+def test_keyword_pattern_does_not_have_to_be_exact():
+    """모델이 짓는 키워드는 날마다 표기가 흔들린다 — 부분 문자열로도 걸린다."""
+    patterns = {"반도체 장비·소재": ["반도체 장비"]}
+    ex = {"themes": [], "keywords": [{"keyword": "반도체 장비", "reason": "x"}],
+          "stocks": []}
+    kept = ts.filter_themes(
+        [theme("반도체 장비", [("가", 9.0), ("나", 8.0), ("다", 7.0)])], ex, patterns)
+    check("표기가 늘어나도 걸림", kept, [])
+
+
+def test_stock_can_be_scoped_by_keyword():
+    """범한퓨얼셀을 '조선기자재' 키워드에서만 뺀다 — 연료전지에서는 남는다."""
+    patterns = {"조선기자재": ["조선기자재", "조선"], "연료전지": ["연료전지"]}
+    ex = {"themes": [], "keywords": [], "stocks": [
+        {"name": "범한퓨얼셀", "keywords": ["조선기자재"], "reason": "수소 쪽"}]}
+    kept = ts.filter_themes([
+        theme("조선기자재", [("범한퓨얼셀", 20.0), ("가", 9.0), ("나", 8.0), ("다", 7.0)]),
+        theme("연료전지", [("범한퓨얼셀", 20.0), ("라", 9.0), ("마", 8.0)]),
+    ], ex, patterns)
+    names = {t["theme_name"]: [s["name"] for s in t["qualifying"]] for t in kept}
+    check("키워드 범위에서 빠짐", names["조선기자재"], ["가", "나", "다"])
+    check("다른 키워드에는 남음", names["연료전지"], ["범한퓨얼셀", "라", "마"])
+
+
+def test_a_theme_with_no_keyword_is_not_swept_up():
+    """어느 키워드에도 안 묶인 테마는 키워드 규칙에 걸리지 않는다.
+
+    keyword_for 가 None 을 주는 경우다. 여기서 아무 규칙이나 걸리면 이름을
+    모르는 새 테마가 통째로 사라진다.
+    """
+    ex = {"themes": [], "keywords": [{"keyword": "5G", "reason": "옛 테마"}],
+          "stocks": []}
+    kept = ts.filter_themes(
+        [theme("처음보는테마", [("가", 9.0), ("나", 8.0), ("다", 7.0)])], ex, {})
+    check("살아남음", [t["theme_name"] for t in kept], ["처음보는테마"])
+
+
 def test_wide_stale_theme_with_a_few_movers_is_dropped():
     """구성 40종목 중 3개만 오른 테마는 테마가 움직인 게 아니다.
 
@@ -263,9 +325,9 @@ def test_shipped_exclusion_file_is_readable():
           ts.theme_exclusion("반도체 장비", ex["themes"]), None)
     beomhan = {"name": "범한퓨얼셀", "code": "382900"}
     check("범한퓨얼셀 @ 조선기자재 걸림",
-          bool(ts.stock_exclusion(beomhan, "조선기자재", ex["stocks"])), True)
+          bool(ts.stock_exclusion(beomhan, "조선기자재", None, ex["stocks"])), True)
     check("범한퓨얼셀 @ 연료전지 안 걸림",
-          ts.stock_exclusion(beomhan, "연료전지", ex["stocks"]), None)
+          ts.stock_exclusion(beomhan, "연료전지", None, ex["stocks"]), None)
 
 
 def main() -> int:

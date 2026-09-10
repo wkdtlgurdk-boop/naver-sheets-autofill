@@ -245,6 +245,52 @@ def validate_exclusions(stale: list[dict], misfits: list[dict],
     return ok_stale, ok_misfits
 
 
+def preserve_excluded_keywords(groups: list[dict]) -> int:
+    """제외가 지목한 키워드는 키워드 지도에서 지우지 않는다.
+
+    키워드 제외는 keywords.json 의 키워드 -> 테마 지도를 거꾸로 타고 내려가
+    걸린다. 그런데 그렇게 제외된 테마는 이 단계에서 모델에게 보이지도 않으므로
+    모델이 만든 새 지도에는 그 키워드가 없다. 그대로 덮어쓰면 다음 단계
+    (theme_scan --regroup)에서 지도가 끊겨 제외가 풀린다 — 어제 뺀 테마가
+    오늘 슬롯에 돌아오고, 시트만 봐서는 이유를 알 수 없다.
+
+    종목 제외의 keywords 범위도 같은 지도를 쓰므로 함께 살린다.
+    """
+    ex = ts.load_exclusions(EXCLUSIONS)
+    wanted = [str(r.get("keyword") or r.get("pattern") or "").strip()
+              for r in ex["keywords"]]
+    for rule in ex["stocks"]:
+        wanted += [str(k).strip() for k in (rule.get("keywords") or [])]
+    wanted = [w for w in wanted if w]
+    if not wanted:
+        return 0
+
+    try:
+        old_entries = json.loads(KEYWORDS.read_text(encoding="utf-8")) if KEYWORDS.exists() else []
+    except (json.JSONDecodeError, OSError):
+        return 0
+    if not isinstance(old_entries, list):
+        return 0
+
+    have = {g["keyword"] for g in groups}
+    claimed = {t for g in groups for t in g["source_themes"]}
+    kept = 0
+    for entry in old_entries:
+        kw = str(entry.get("keyword") or "").strip()
+        if not kw or kw in have or not ts.matches_keyword(kw, wanted):
+            continue
+        themes = [t for t in entry.get("source_themes", []) if t not in claimed]
+        if not themes:
+            continue
+        groups.append({"keyword": kw, "source_themes": themes,
+                       "reason": "제외 규칙이 이 키워드를 지목하고 있어 지도를 유지한다."})
+        have.add(kw)
+        kept += 1
+        print(f"[llm_group] 제외된 키워드 '{kw}' 의 테마 지도를 유지합니다 "
+              f"({len(themes)}개 테마).", file=sys.stderr)
+    return kept
+
+
 def record_exclusions(stale: list[dict], misfits: list[dict], today: str) -> int:
     """제외 목록에 덧붙인다. 사람이 적은 항목은 그대로 둔다.
 
@@ -283,7 +329,7 @@ def record_exclusions(stale: list[dict], misfits: list[dict], today: str) -> int
 
     for item in misfits:
         stock = {"name": item["stock"], "code": ""}
-        if ts.stock_exclusion(stock, item["theme"], stocks):
+        if ts.stock_exclusion(stock, item["theme"], None, stocks):
             continue
         reason = item["reason"]
         if item["belongs"]:
@@ -359,6 +405,8 @@ def main() -> int:
 
     if not groups:
         return give_up("검증을 통과한 그룹이 없습니다")
+
+    preserve_excluded_keywords(groups)
 
     before = KEYWORDS.read_text(encoding="utf-8") if KEYWORDS.exists() else ""
     payload = json.dumps(groups, ensure_ascii=False, indent=2) + "\n"

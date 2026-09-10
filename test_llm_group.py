@@ -95,6 +95,68 @@ def test_same_stock_in_another_theme_is_a_separate_entry():
           [["조선기자재"], ["풍력"]])
 
 
+def run_preserve(exclusions, old_keywords, groups):
+    """제외 파일과 어제의 keywords.json 을 붙여 놓고 보존 로직을 돌린다."""
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "exclusions.json").write_text(
+        json.dumps(exclusions, ensure_ascii=False), encoding="utf-8")
+    (tmp / "keywords.json").write_text(
+        json.dumps(old_keywords, ensure_ascii=False), encoding="utf-8")
+    real_ex, real_kw = lg.EXCLUSIONS, lg.KEYWORDS
+    lg.EXCLUSIONS, lg.KEYWORDS = tmp / "exclusions.json", tmp / "keywords.json"
+    try:
+        lg.preserve_excluded_keywords(groups)
+    finally:
+        lg.EXCLUSIONS, lg.KEYWORDS = real_ex, real_kw
+    return groups
+
+
+def test_excluded_keyword_keeps_its_theme_map():
+    """제외된 키워드가 새 지도에서 사라지면 다음 실행에 제외가 풀린다.
+
+    키워드 제외는 keywords.json 의 키워드 -> 테마 지도를 타고 걸린다. 그런데
+    그렇게 빠진 테마는 모델에게 보이지도 않으니 모델의 새 지도에는 그 키워드가
+    없다. 그대로 덮어쓰면 --regroup 단계에서 지도가 끊겨 어제 뺀 테마가 오늘
+    슬롯에 돌아온다.
+    """
+    groups = [{"keyword": "반도체", "source_themes": ["반도체 장비"], "reason": ""}]
+    out = run_preserve(
+        {"keywords": [{"keyword": "5G", "reason": "옛 테마"}]},
+        [{"keyword": "5G", "source_themes": ["5G(5세대 이동통신)", "통신장비"]}],
+        groups)
+    check("지도가 남음", [g["keyword"] for g in out], ["반도체", "5G"])
+    check("테마도 그대로", out[1]["source_themes"], ["5G(5세대 이동통신)", "통신장비"])
+
+
+def test_keyword_named_only_by_a_stock_rule_is_kept_too():
+    """종목 제외의 keywords 범위도 같은 지도를 쓴다."""
+    groups = [{"keyword": "반도체", "source_themes": ["반도체 장비"], "reason": ""}]
+    out = run_preserve(
+        {"stocks": [{"name": "범한퓨얼셀", "keywords": ["조선기자재"], "reason": "수소"}]},
+        [{"keyword": "조선기자재", "source_themes": ["조선기자재"]}],
+        groups)
+    check("지도가 남음", [g["keyword"] for g in out], ["반도체", "조선기자재"])
+
+
+def test_a_theme_the_model_claimed_is_not_preserved_twice():
+    """모델이 오늘 가져간 테마는 옛 항목에서 뺀다 — 한 테마는 한 키워드에만."""
+    groups = [{"keyword": "통신장비", "source_themes": ["통신장비"], "reason": ""}]
+    out = run_preserve(
+        {"keywords": [{"keyword": "5G", "reason": "옛 테마"}]},
+        [{"keyword": "5G", "source_themes": ["5G(5세대 이동통신)", "통신장비"]}],
+        groups)
+    check("중복 없음", out[1]["source_themes"], ["5G(5세대 이동통신)"])
+
+
+def test_nothing_is_preserved_without_keyword_rules():
+    groups = [{"keyword": "반도체", "source_themes": ["반도체 장비"], "reason": ""}]
+    out = run_preserve(
+        {"themes": [{"pattern": "5G", "reason": "옛 테마"}]},
+        [{"keyword": "5G", "source_themes": ["5G(5세대 이동통신)"]}],
+        groups)
+    check("테마명 규칙은 지도가 필요 없음", [g["keyword"] for g in out], ["반도체"])
+
+
 def test_unknown_names_are_ignored():
     """오늘 스캔에 없는 이름은 패턴이 되지 못한다.
 

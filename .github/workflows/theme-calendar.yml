@@ -52,7 +52,9 @@ jobs:
           python test_theme_write.py
 
       # Scan finance.naver.com's theme pages and merge overlapping themes.
-      # All 266 themes, so ~270 page fetches, 67s measured. Writes final_groups.json.
+      # The list is ordered by today's move, so only its first SCAN_PAGES pages
+      # are read -- ~80 themes and ~82 fetches, down from 266 and ~270 (67s
+      # measured). Writes final_groups.json.
       - name: Scan themes
         run: python theme_scan.py
 

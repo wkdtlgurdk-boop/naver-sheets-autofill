@@ -32,7 +32,7 @@ SURGE_CAP = 500      # 억원 — 급등주에만 적용하는 완화 문턱
 SURGE_RATE = 20.0     # %
 MIN_COUNT = 3          # qualifying stocks needed for a theme to count
 MERGE_THRESHOLD = 0.6  # overlap coefficient for auto-merge
-MAX_PAGES = 20         # 테마 목록 페이지 상한 (2026-09-08 실측 7페이지)
+SCAN_PAGES = 2         # 목록에서 읽을 페이지 수 (전체는 7페이지 / 266개)
 PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
 MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 
@@ -97,7 +97,7 @@ def load_exclusions(path=None):
     없으면 멈춰야 하는 것이 아니다.
     """
     path = path or EXCLUSION_FILE
-    empty = {"themes": [], "stocks": []}
+    empty = {"themes": [], "keywords": [], "stocks": []}
     if not path.exists():
         return empty
     try:
@@ -107,6 +107,7 @@ def load_exclusions(path=None):
         print(f"[WARN] could not read {path.name}: {e}", file=sys.stderr)
         return empty
     return {"themes": list(data.get("themes") or []),
+            "keywords": list(data.get("keywords") or []),
             "stocks": list(data.get("stocks") or [])}
 
 
@@ -124,12 +125,44 @@ def theme_exclusion(theme_name, rules):
     return None
 
 
-def stock_exclusion(stock, theme_name, rules):
-    """이 종목을 이 테마에서 빼라는 규칙. 없으면 None.
+def matches_keyword(keyword, pats):
+    """키워드가 패턴 목록에 걸리나. 정확 일치 우선, 없으면 부분 문자열.
 
-    themes 를 지정하면 그 테마들에서만 뺀다. 범한퓨얼셀은 조선기자재에
+    키워드는 매일 모델이 새로 짓는 이름이라 표기가 흔들린다('반도체 장비'와
+    '반도체 장비·소재'). 정확히 적으라고 요구하면 사람이 적어둔 제외가
+    어느 날 조용히 안 걸린다.
+    """
+    if not keyword:
+        return False
+    pats = [str(p) for p in pats]
+    if keyword in pats or "*" in pats:
+        return True
+    return any(p and p in keyword for p in pats)
+
+
+def keyword_exclusion(keyword, rules):
+    """이 키워드를 통째로 빼라는 규칙. 없으면 None.
+
+    시트에 보이는 건 테마명이 아니라 키워드라, 사람이 "이건 빼" 라고
+    말하게 되는 단위도 키워드다. 키워드 -> 테마 지도는 keywords.json 이
+    들고 있으므로 여기서 그걸 거꾸로 타고 내려간다.
+    """
+    if not keyword:
+        return None
+    for rule in rules:
+        pat = str(rule.get("keyword") or rule.get("pattern") or "").strip()
+        if pat and matches_keyword(keyword, [pat]):
+            return rule
+    return None
+
+
+def stock_exclusion(stock, theme_name, keyword, rules):
+    """이 종목을 여기서 빼라는 규칙. 없으면 None.
+
+    themes(테마명 부분일치) 나 keywords(키워드) 로 범위를 좁힐 수 있고,
+    둘 다 적으면 둘 중 하나만 맞아도 걸린다. 범한퓨얼셀은 조선기자재에
     있을 이유가 없지만 연료전지 테마에서는 대표종목이 맞다 — 전역으로
-    빼면 정작 맞는 자리에서도 사라진다. themes 가 없거나 "*" 이면 전역.
+    빼면 정작 맞는 자리에서도 사라진다. 아무 범위도 안 적으면 전역이다.
     code 가 적혀 있으면 코드로, 없으면 종목명으로 맞춘다.
     """
     for rule in rules:
@@ -140,8 +173,13 @@ def stock_exclusion(stock, theme_name, rules):
                 continue
         elif not name or name != stock.get("name"):
             continue
-        pats = rule.get("themes") or ["*"]
-        if any(p == "*" or str(p) in theme_name for p in pats):
+        themes = rule.get("themes") or []
+        keywords = rule.get("keywords") or []
+        if not themes and not keywords:
+            return rule
+        if any(str(p) == "*" or str(p) in theme_name for p in themes):
+            return rule
+        if matches_keyword(keyword, keywords):
             return rule
     return None
 
@@ -163,12 +201,22 @@ def why_excluded(rule):
     return str(rule.get("reason") or "이유 없음")
 
 
-def filter_themes(raw, exclusions=None):
+def label_rule(rule):
+    """규칙을 로그 한 칸에 들어갈 이름으로."""
+    for key in ("name", "pattern", "keyword"):
+        if rule.get(key):
+            return str(rule[key])
+    return "(이름 없는 규칙)"
+
+
+def filter_themes(raw, exclusions=None, patterns=None):
     """오늘의 테마로 볼 수 없는 것들을 떨어뜨린다.
 
     세 가지가 순서대로 걸린다.
 
-    1) 제외 목록의 테마 — 이름만으로 아는 옛 이벤트 테마.
+    1) 제외 목록의 테마 — 이름만으로 아는 옛 이벤트 테마. 테마명으로도,
+       그 테마가 속한 키워드로도 지목할 수 있다. 시트에 보이는 건 키워드뿐이라
+       사람이 "이건 빼" 라고 말하게 되는 단위가 키워드이기 때문이다.
     2) 제외 목록의 종목 — 그 테마의 성격과 안 맞는 종목. 빼고 나면 남은
        수가 MIN_COUNT 에 못 미칠 수 있고, 그러면 테마째 빠진다. 그게 맞다:
        엉뚱한 종목 둘을 빼고 나면 애초에 테마가 움직인 게 아니었다는 뜻이다.
@@ -176,23 +224,38 @@ def filter_themes(raw, exclusions=None):
        그 3개가 움직인 것이다. 낡고 비대한 테마가 정확히 이 모양이라, 이름을
        몰라도 여기서 걸린다. 반대로 작고 뜨거운 테마는 비율이 높아 남는다.
 
-    제외는 전부 stderr 로 남긴다. 조용히 사라지는 게 제일 나쁘다.
+    제외는 전부 stderr 로 남긴다. 조용히 사라지는 게 제일 나쁘다. 오늘
+    아무것도 걸지 못한 규칙도 한 줄로 남긴다 — 오타로 죽은 규칙과 오늘
+    걸릴 게 없었던 규칙은 파일만 봐서는 구별되지 않는다.
     """
     ex = exclusions if exclusions is not None else load_exclusions()
-    theme_rules, stock_rules = ex.get("themes", []), ex.get("stocks", [])
+    patterns = patterns if patterns is not None else load_keyword_overrides()
+    theme_rules = ex.get("themes", [])
+    keyword_rules = ex.get("keywords", [])
+    stock_rules = ex.get("stocks", [])
+    used = set()
 
     kept = []
     for t in raw:
         name = t["theme_name"]
+        keyword = keyword_for(name, patterns)
+
         rule = theme_exclusion(name, theme_rules)
+        where = f"테마 '{name}'"
+        if not rule:
+            rule = keyword_exclusion(keyword, keyword_rules)
+            if rule:
+                where = f"테마 '{name}' (키워드 '{keyword}')"
         if rule:
-            print(f"[제외] 테마 '{name}' — {why_excluded(rule)}", file=sys.stderr)
+            used.add(id(rule))
+            print(f"[제외] {where} — {why_excluded(rule)}", file=sys.stderr)
             continue
 
         qualifying = []
         for s in t["qualifying"]:
-            srule = stock_exclusion(s, name, stock_rules)
+            srule = stock_exclusion(s, name, keyword, stock_rules)
             if srule:
+                used.add(id(srule))
                 print(f"[제외] {s['name']} @ '{name}' — {why_excluded(srule)}",
                       file=sys.stderr)
                 continue
@@ -210,6 +273,12 @@ def filter_themes(raw, exclusions=None):
             continue
 
         kept.append(dict(t, qualifying=qualifying))
+
+    idle = [label_rule(r) for r in theme_rules + keyword_rules + stock_rules
+            if id(r) not in used]
+    if idle:
+        print(f"[제외] 오늘 아무것도 걸지 않은 규칙 {len(idle)}개: {', '.join(idle)}",
+              file=sys.stderr)
     return kept
 
 
@@ -239,21 +308,27 @@ def qualifies(rate, cap):
 
 
 def fetch_theme_list(opener):
-    """테마 목록 전 페이지를 (theme_id, name) 순서대로 돌려준다.
+    """테마 목록 앞 SCAN_PAGES 페이지를 (theme_id, name) 순서대로 돌려준다.
 
-    예전에는 page 파라미터 없이 한 번만 받았는데 그건 첫 40개일 뿐이고 전체는
-    266개다(2026-09-08 실측) — 15%만 보고 있었다. 그날 제약업체·LED·마이크로
-    LED·5G 가 전부 2페이지 밖이라, 현대약품(+23.99%)과 광전자(+15.37%)가
-    조건을 넉넉히 넘고도 스캔 대상에조차 들지 못했다.
+    네이버의 테마 목록은 전일대비 등락률 내림차순이다. 그래서 앞쪽이 오늘
+    실제로 움직인 테마고, 뒤로 갈수록 '오늘 이 이름으로 부를 이유가 없는'
+    테마가 나온다 — 266개를 끝까지 읽으면 그중 상당수가 옛 이벤트 테마이거나
+    구성종목 몇 개만 각자 오른 것들이다. 2페이지(80개)에서 끊으면 상세
+    페이지 요청이 ~270번에서 ~82번으로 줄고, 걸러야 할 것이 애초에 덜 들어온다.
 
-    목록 페이지에 페이지 링크가 없어서(실측: 정규식으로 뽑히는 page 링크 0개)
-    끝을 페이지 수로 알 수 없다. 대신 마지막 페이지를 넘기면 네이버가 같은
-    페이지를 다시 주므로, 신규 테마가 하나도 없으면 끝으로 본다.
+    이건 목록이 등락률순이라는 데 기대는 선택이다. 네이버가 정렬을 바꾸면
+    조용히 엉뚱한 80개를 보게 되므로, 시트가 이상하면 SCAN_PAGES 를 올려서
+    (7이면 전체) 비교해 볼 것. 2026-09-08 실측으로는 제약업체·LED·5G 가 전부
+    2페이지 밖이었는데, 그날 그 테마들은 개별 종목만 올랐고 테마 자체는
+    움직이지 않았다 — 지금 기준으로는 참여율에서도 걸릴 것들이다.
+
+    페이지 링크는 없고(실측: 정규식으로 뽑히는 page 링크 0개) 범위를 넘기면
+    같은 페이지를 다시 주므로, 신규 테마가 하나도 없으면 끝으로 본다.
     """
     pat = re.compile(
         r'sise_group_detail\.naver\?type=theme&no=(\d+)">([^<]+)</a>')
     seen, order = set(), []
-    for page in range(1, MAX_PAGES + 1):
+    for page in range(1, SCAN_PAGES + 1):
         html = fetch(opener, f"https://finance.naver.com/sise/theme.naver?&page={page}")
         new = [(tid, name) for tid, name in pat.findall(html) if tid not in seen]
         if not new:
@@ -262,9 +337,6 @@ def fetch_theme_list(opener):
             seen.add(tid)
             order.append((tid, name))
         time.sleep(0.12)
-    else:
-        print(f"[WARN] 테마 목록이 {MAX_PAGES}페이지에서 끊겼다 — 더 있을 수 있다",
-              file=sys.stderr)
     return order
 
 
