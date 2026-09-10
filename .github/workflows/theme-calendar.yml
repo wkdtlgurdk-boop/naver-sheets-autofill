@@ -78,8 +78,13 @@ jobs:
       - name: Regroup
         run: python theme_scan.py --regroup
 
+      # 임시 파일에 받아서 성공했을 때만 옮긴다. 바로 리다이렉트하면 스크립트가
+      # 죽어도 0바이트 파일이 남아, 뒤 단계가 "파일은 있는데 JSON 이 아니다" 라는
+      # 엉뚱한 오류로 죽는다.
       - name: Fetch index summary
-        run: python market_summary.py > market_summary.json
+        run: |
+          python market_summary.py > /tmp/market_summary.json
+          mv /tmp/market_summary.json market_summary.json
 
       - name: Show what was found
         run: |

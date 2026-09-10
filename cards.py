@@ -234,13 +234,26 @@ def build(out_dir: Path, groups: list[dict], market: dict, now: datetime) -> lis
     return made
 
 
+def load(path: Path):
+    """앞 단계가 실패해 0바이트로 남은 파일을 JSONDecodeError 대신 빈 값으로 본다.
+
+    워크플로가 `python market_summary.py > market_summary.json` 으로 만들기
+    때문에, 그 스크립트가 죽어도 파일 자체는 빈 채로 생긴다.
+    """
+    text = path.read_text(encoding="utf-8").strip() if path.exists() else ""
+    return json.loads(text) if text else None
+
+
 def main() -> int:
     here = Path(__file__).parent
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
-    groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
-    market = json.loads((here / "market_summary.json").read_text(encoding="utf-8"))
+    groups = load(here / "final_groups.json")
+    market = load(here / "market_summary.json")
     if not groups:
         raise SystemExit("[중단] 그룹이 0개입니다. 카드를 만들지 않습니다.")
+    if not market:
+        raise SystemExit("[중단] 지수 요약이 비어 있습니다 — market_summary.py 가 "
+                         "실패했는지 보세요. 요약 카드에 지수를 넣을 수 없습니다.")
     made = build(out_dir, groups, market, datetime.now(KST))
     for p in made:
         print(f"  {p}")

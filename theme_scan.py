@@ -350,6 +350,13 @@ def scan_themes():
 
     themes = fetch_theme_list(opener)
     print(f"themes listed: {len(themes)}", file=sys.stderr)
+    # 목록이 0개인 건 '오늘 오른 테마가 없다'가 아니라 목록 페이지를 못 읽었다는
+    # 뜻이다(2026-09-10 23:54 실측: 네이버가 두 페이지 모두 엉뚱한 HTML 을 줬다).
+    # 조용히 0개로 진행하면 그날 카드가 빈 채로 나가고 시트만 멀쩡해 보인다.
+    if not themes:
+        raise SystemExit(
+            "[중단] 테마 목록이 0개입니다. 네이버가 예상과 다른 응답을 줬습니다 "
+            "(점검·차단·페이지 구조 변경). 스캔을 신뢰할 수 없어 멈춥니다.")
 
     name_pat = re.compile(r'<a href="/item/main\.naver\?code=([0-9A-Za-z]{6})">([^<]*)</a>')
     rate_pat = re.compile(r'class="tah p11[^"]*">\s*([+\-]?[\d,.]+)%\s*</span>')
