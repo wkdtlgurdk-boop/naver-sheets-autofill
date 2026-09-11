@@ -22,17 +22,21 @@ import sys
 import json
 import time
 import urllib.request
-import http.cookiejar
 from pathlib import Path
 
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://m.stock.naver.com/",
+    "User-Agent": "Mozilla/5.0 naverstock-web-api-skill/1.0",
+}
 MIN_CAP = 2000       # 억원
 MIN_RATE = 5.0        # %
 SURGE_CAP = 500      # 억원 — 급등주에만 적용하는 완화 문턱
 SURGE_RATE = 20.0     # %
 MIN_COUNT = 3          # qualifying stocks needed for a theme to count
 MERGE_THRESHOLD = 0.6  # overlap coefficient for auto-merge
-SCAN_PAGES = 2         # 목록에서 읽을 페이지 수 (전체는 7페이지 / 266개)
+SCAN_PAGES = 1         # 목록에서 읽을 페이지 수
+PAGE_SIZE = 100        # 한 페이지에 받는 테마 수 (등락률 내림차순 상위)
 PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
 MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 
@@ -282,11 +286,20 @@ def filter_themes(raw, exclusions=None, patterns=None):
     return kept
 
 
-def fetch(opener, url):
+def fetch_json(url):
     req = urllib.request.Request(url, headers=HEADERS)
-    with opener.open(req, timeout=15) as resp:
-        raw = resp.read()
-    return raw.decode("euc-kr", errors="ignore")
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def num(value):
+    """'15,130' 이나 '29.98' 같은 문자열을 숫자로. 못 읽으면 None."""
+    if value in (None, "", "N/A", "-"):
+        return None
+    try:
+        return float(str(value).replace(",", "").replace("+", ""))
+    except ValueError:
+        return None
 
 
 def qualifies(rate, cap):
@@ -307,122 +320,97 @@ def qualifies(rate, cap):
     return rate >= MIN_RATE and cap >= MIN_CAP
 
 
-def fetch_theme_list(opener):
-    """테마 목록 앞 SCAN_PAGES 페이지를 (theme_id, name) 순서대로 돌려준다.
+def fetch_theme_list():
+    """테마 목록을 등락률 내림차순으로. 각 항목이 테마의 오늘 성적을 들고 온다.
 
-    네이버의 테마 목록은 전일대비 등락률 내림차순이다. 그래서 앞쪽이 오늘
-    실제로 움직인 테마고, 뒤로 갈수록 '오늘 이 이름으로 부를 이유가 없는'
-    테마가 나온다 — 266개를 끝까지 읽으면 그중 상당수가 옛 이벤트 테마이거나
-    구성종목 몇 개만 각자 오른 것들이다. 2페이지(80개)에서 끊으면 상세
-    페이지 요청이 ~270번에서 ~82번으로 줄고, 걸러야 할 것이 애초에 덜 들어온다.
+    2026-09-11 에 네이버가 finance.naver.com 의 테마 화면을 Next.js 기반으로
+    갈아치우면서 옛 HTML 파싱이 통째로 죽었다. 새 경로는 같은 데이터를 JSON 으로
+    주는데, 오히려 우리가 종목을 하나하나 세서 만들던 값들이 이미 들어 있다:
 
-    이건 목록이 등락률순이라는 데 기대는 선택이다. 네이버가 정렬을 바꾸면
-    조용히 엉뚱한 80개를 보게 되므로, 시트가 이상하면 SCAN_PAGES 를 올려서
-    (7이면 전체) 비교해 볼 것. 2026-09-08 실측으로는 제약업체·LED·5G 가 전부
-    2페이지 밖이었는데, 그날 그 테마들은 개별 종목만 올랐고 테마 자체는
-    움직이지 않았다 — 지금 기준으로는 참여율에서도 걸릴 것들이다.
+        no / name          테마 번호와 이름 (번호는 옛것과 같다)
+        totalCount         구성 종목 수
+        riseCount          그중 오른 종목 수   -> 참여율을 셀 필요가 없다
+        changeRate         테마 전체 등락률
 
-    페이지 링크는 없고(실측: 정규식으로 뽑히는 page 링크 0개) 범위를 넘기면
-    같은 페이지를 다시 주므로, 신규 테마가 하나도 없으면 끝으로 본다.
+    목록이 등락률 내림차순이라 앞쪽이 오늘 움직인 테마다. 예전에는 그 정렬을
+    '그럴 것이다' 하고 믿어야 했지만 이제 changeRate 가 값으로 오므로 가정이
+    아니다. 한 페이지에 PAGE_SIZE 개씩, SCAN_PAGES 페이지까지 읽는다.
     """
-    pat = re.compile(
-        r'sise_group_detail\.naver\?type=theme&no=(\d+)">([^<]+)</a>')
     seen, order = set(), []
     for page in range(1, SCAN_PAGES + 1):
-        html = fetch(opener, f"https://finance.naver.com/sise/theme.naver?&page={page}")
-        new = [(tid, name) for tid, name in pat.findall(html) if tid not in seen]
+        url = (f"https://m.stock.naver.com/api/stocks/theme"
+               f"?page={page}&pageSize={PAGE_SIZE}")
+        groups = fetch_json(url).get("groups") or []
+        new = [g for g in groups if g.get("no") not in seen]
         if not new:
-            # 1페이지부터 비면 '끝'이 아니라 못 읽은 것이다. 여기서 응답을 그대로
-            # 남긴다 — 네이버에 직접 붙어볼 수 없는 환경에서 이 몇 줄이 차단인지
-            # HTML 변경인지 빈 응답인지를 가른다.
-            if page == 1:
-                print(f"[진단] 1페이지에서 테마 링크를 찾지 못했습니다. "
-                      f"응답 {len(html):,}자.", file=sys.stderr)
-                head = re.sub(r"\s+", " ", html[:600])
-                print(f"[진단] 앞부분: {head!r}", file=sys.stderr)
-                for probe in ("sise_group_detail", "theme", "로그인", "점검",
-                              "차단", "captcha", "Access Denied"):
-                    if probe in html:
-                        print(f"[진단] '{probe}' 문자열은 응답에 있습니다.",
-                              file=sys.stderr)
             break
-        for tid, name in new:
-            seen.add(tid)
-            order.append((tid, name))
+        for g in new:
+            seen.add(g["no"])
+            order.append(g)
         time.sleep(0.12)
     return order
 
 
+def fetch_theme_stocks(theme_no):
+    """테마 하나의 구성 종목. 등락률·시총·거래대금을 그대로 준다.
+
+    단위는 옛 HTML 과 같다 — marketValue 는 억원, accumulatedTradingValue 는
+    백만원이다. 그래서 qualifies() 의 문턱도 그대로 쓸 수 있다.
+    """
+    url = (f"https://m.stock.naver.com/api/stocks/theme/{theme_no}"
+           f"?page=1&pageSize={PAGE_SIZE}")
+    out = []
+    for s in fetch_json(url).get("stocks") or []:
+        code = s.get("itemCode")
+        name = s.get("stockName")
+        rate = num(s.get("fluctuationsRatio"))
+        cap = num(s.get("marketValue"))
+        amount = num(s.get("accumulatedTradingValue"))
+        if not code or not name or None in (rate, cap, amount):
+            continue
+        out.append({"name": name, "code": code, "rate": rate,
+                    "cap": int(cap), "amount": int(amount)})
+    return out
+
+
 def scan_themes():
-    cj = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-
-    # enable amount(거래대금) + market_sum(시가총액) columns, persists via cookie
-    fetch(opener, "https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no=593")
-    fetch(opener, "https://finance.naver.com/sise/field_submit.naver?menu=theme&returnUrl=http%3A%2F%2Ffinance.naver.com%2Fsise%2Fsise_group_detail.naver%3Ftype%3Dtheme%26no%3D593&fieldIds=amount&fieldIds=market_sum")
-
-    themes = fetch_theme_list(opener)
+    themes = fetch_theme_list()
     print(f"themes listed: {len(themes)}", file=sys.stderr)
-    # 목록이 0개인 건 '오늘 오른 테마가 없다'가 아니라 목록 페이지를 못 읽었다는
-    # 뜻이다(2026-09-10 23:54 실측: 네이버가 두 페이지 모두 엉뚱한 HTML 을 줬다).
-    # 조용히 0개로 진행하면 그날 카드가 빈 채로 나가고 시트만 멀쩡해 보인다.
+    # 목록이 0개인 건 '오늘 오른 테마가 없다'가 아니라 목록을 못 읽었다는 뜻이다.
+    # 조용히 0개로 진행하면 그날 시트가 빈 채로 남고 아무도 이유를 모른다.
     if not themes:
         raise SystemExit(
             "[중단] 테마 목록이 0개입니다. 네이버가 예상과 다른 응답을 줬습니다 "
-            "(점검·차단·페이지 구조 변경). 스캔을 신뢰할 수 없어 멈춥니다.")
-
-    name_pat = re.compile(r'<a href="/item/main\.naver\?code=([0-9A-Za-z]{6})">([^<]*)</a>')
-    rate_pat = re.compile(r'class="tah p11[^"]*">\s*([+\-]?[\d,.]+)%\s*</span>')
-    cap_pat = re.compile(r'<td class="number" style="padding-right:20px;">([\d,\-]+)</td>')
-    table_marker = '업종별 시세 리스트'
+            "(점검·차단·API 변경). 스캔을 신뢰할 수 없어 멈춥니다.")
 
     results = []
-    for theme_id, theme_name in themes:
-        url = f"https://finance.naver.com/sise/sise_group_detail.naver?type=theme&no={theme_id}"
-        html = fetch(opener, url)
-        start = html.find(table_marker)
-        end = html.find('</table>', start) if start != -1 else -1
-        table_html = html[start:end] if start != -1 and end != -1 else html
+    for t in themes:
+        name = t.get("name") or str(t.get("no"))
+        members = int(t.get("totalCount") or 0)
+        ups = int(t.get("riseCount") or 0)
 
-        codes_names = name_pat.findall(table_html)
-        rates = rate_pat.findall(table_html)
-        nums = cap_pat.findall(table_html)
-        amounts = nums[0::2]
-        caps = nums[1::2]
+        # 참여율은 목록에서 이미 알 수 있다. 여기서 걸러내면 죽은 테마의 상세를
+        # 받지 않아도 되므로 요청이 크게 준다 — 예전에는 전부 받아본 뒤에야
+        # 버릴 수 있었다.
+        if members and ups / members < MIN_PARTICIPATION:
+            continue
 
-        qualifying = []
-        member_rates = []
-        if len(codes_names) == len(rates) == len(caps) == len(amounts):
-            for (code, name), rate_str, amount_str, cap_str in zip(codes_names, rates, amounts, caps):
-                cap_str = cap_str.replace(",", "")
-                amount_str = amount_str.replace(",", "")
-                rate = float(rate_str.replace(",", ""))
-                # 참여율은 조건 통과 여부와 무관하게 구성종목 전체로 센다.
-                # 시총이 작아 대표주가 못 되는 종목도 테마가 움직였는지를
-                # 말해주는 표는 던진다.
-                member_rates.append(rate)
-                if not cap_str.isdigit() or not amount_str.isdigit():
-                    continue
-                cap = int(cap_str)
-                amount = int(amount_str)
-                if qualifies(rate, cap):
-                    qualifying.append({"name": name, "code": code, "rate": rate, "cap": cap, "amount": amount})
-        else:
-            print(f"[WARN] {theme_name}: parse count mismatch "
-                  f"(names={len(codes_names)}, rates={len(rates)}, caps={len(caps)}, amounts={len(amounts)})",
-                  file=sys.stderr)
-
+        stocks = fetch_theme_stocks(t["no"])
+        qualifying = [s for s in stocks if qualifies(s["rate"], s["cap"])]
         if len(qualifying) >= MIN_COUNT:
             results.append({
-                "theme_name": theme_name,
-                "theme_id": theme_id,
-                "member_count": len(member_rates),
-                "up_count": sum(1 for r in member_rates if r >= PARTICIPATION_RATE),
-                "avg_rate": round(sum(member_rates) / len(member_rates), 2) if member_rates else None,
+                "theme_name": name,
+                "theme_id": str(t["no"]),
+                "member_count": members,
+                "up_count": ups,
+                "avg_rate": num(t.get("changeRate")),
                 "qualifying": qualifying,
             })
         time.sleep(0.12)
 
+    print(f"themes fetched in detail: "
+          f"{sum(1 for t in themes if t.get('totalCount') and t.get('riseCount', 0) / t['totalCount'] >= MIN_PARTICIPATION)}",
+          file=sys.stderr)
     return results
 
 

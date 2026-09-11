@@ -122,48 +122,91 @@ def test_surge_lowers_the_cap_floor_but_only_for_surges():
 
 
 def fake_list(pages):
-    """가짜 목록 페이지로 fetch_theme_list 를 돌리고 (결과, 요청수) 를 돌려준다."""
+    """가짜 목록 응답으로 fetch_theme_list 를 돌리고 (결과, 요청수) 를 돌려준다."""
     seen_urls = []
 
-    def fake_fetch(_opener, url):
+    def fake_fetch_json(url):
         seen_urls.append(url)
-        page = int(url.rsplit("page=", 1)[1])
+        page = int(url.split("page=")[1].split("&")[0])
         last = pages[max(pages)]
-        return "".join(
-            f'sise_group_detail.naver?type=theme&no={tid}">{nm}</a>'
-            for tid, nm in pages.get(page, last)   # 범위 초과 = 마지막 페이지 반복
-        )
+        return {"groups": pages.get(page, last)}   # 범위 초과 = 마지막 페이지 반복
 
-    real_fetch, real_sleep = ts.fetch, ts.time.sleep
-    ts.fetch, ts.time.sleep = fake_fetch, lambda _s: None
+    real_fetch, real_sleep = ts.fetch_json, ts.time.sleep
+    ts.fetch_json, ts.time.sleep = fake_fetch_json, lambda _s: None
     try:
-        return ts.fetch_theme_list(object()), len(seen_urls)
+        return ts.fetch_theme_list(), len(seen_urls)
     finally:
-        ts.fetch, ts.time.sleep = real_fetch, real_sleep
+        ts.fetch_json, ts.time.sleep = real_fetch, real_sleep
+
+
+def listed(no, name, total=10, rise=5, rate="3.00"):
+    """목록 API 가 주는 테마 한 줄."""
+    return {"no": no, "name": name, "totalCount": total,
+            "riseCount": rise, "changeRate": rate}
 
 
 def test_theme_list_stops_at_the_page_limit():
     """목록은 SCAN_PAGES 페이지에서 끊는다.
 
-    네이버 목록은 전일대비 등락률 내림차순이라 앞쪽이 오늘 움직인 테마다.
-    끝까지(7페이지, 266개) 읽으면 뒤쪽은 대부분 옛 테마이거나 구성종목 몇
-    개만 각자 오른 것들이고, 상세 페이지 요청만 세 배로 든다.
+    목록은 등락률 내림차순이라 앞쪽이 오늘 움직인 테마다. 한 페이지에
+    PAGE_SIZE(100)개를 받으므로 한 페이지면 상위 100개가 들어온다.
     """
-    pages = {1: [("1", "가"), ("2", "나")], 2: [("3", "다")], 3: [("4", "라")]}
+    pages = {1: [listed(1, "가"), listed(2, "나")], 2: [listed(3, "다")]}
     got, calls = fake_list(pages)
-    check("두 페이지까지만", got, [("1", "가"), ("2", "나"), ("3", "다")])
-    check("세 번째 페이지는 안 부름", calls, ts.SCAN_PAGES)
+    check("첫 페이지까지만", [g["name"] for g in got], ["가", "나"])
+    check("두 번째 페이지는 안 부름", calls, ts.SCAN_PAGES)
 
 
 def test_theme_list_stops_early_when_a_page_repeats():
-    """페이지가 상한보다 적으면 반복 페이지에서 멈춘다.
+    """같은 테마만 다시 오면 거기서 멈춘다 — 범위를 넘긴 것이다."""
+    real = ts.SCAN_PAGES
+    ts.SCAN_PAGES = 3
+    try:
+        got, calls = fake_list({1: [listed(1, "가")], 2: [listed(2, "나")]})
+    finally:
+        ts.SCAN_PAGES = real
+    check("새 테마만 모음", [g["name"] for g in got], ["가", "나"])
+    check("반복을 확인하는 한 번만 더", calls, 3)
 
-    목록에는 페이지 링크가 없어서 끝을 셀 수 없고, 범위를 넘기면 네이버가
-    같은 페이지를 다시 준다.
+
+def test_scan_skips_the_detail_call_for_a_dead_theme():
+    """참여율이 낮은 테마는 상세를 받지 않는다.
+
+    예전에는 전부 받아본 뒤에야 버릴 수 있었다. 목록이 totalCount/riseCount 를
+    주므로 이제 요청 전에 거를 수 있고, 그만큼 요청이 줄어든다.
     """
-    got, calls = fake_list({1: [("1", "가"), ("2", "나")]})
-    check("한 페이지가 전부", got, [("1", "가"), ("2", "나")])
-    check("반복을 확인하는 한 번만 더", calls, 2)
+    rows = [listed(1, "살아있음", total=10, rise=6),
+            listed(2, "죽은테마", total=40, rise=3)]
+    asked = []
+
+    def fake_stocks(no):
+        asked.append(no)
+        return [{"name": f"종목{i}", "code": f"{i:06d}", "rate": 9.0,
+                 "cap": 5000, "amount": 100} for i in range(3)]
+
+    real_list, real_stocks, real_sleep = (
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep)
+    ts.fetch_theme_list = lambda: rows
+    ts.fetch_theme_stocks = fake_stocks
+    ts.time.sleep = lambda _s: None
+    try:
+        out = ts.scan_themes()
+    finally:
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep = (
+            real_list, real_stocks, real_sleep)
+    check("산 테마만 상세 조회", asked, [1])
+    check("결과도 하나", [t["theme_name"] for t in out], ["살아있음"])
+    check("목록이 준 값을 그대로 담음",
+          (out[0]["member_count"], out[0]["up_count"]), (10, 6))
+
+
+def test_numbers_come_out_of_naver_strings():
+    """네이버는 숫자를 '15,130' 같은 문자열로 준다."""
+    check("쉼표", ts.num("15,130"), 15130.0)
+    check("소수", ts.num("29.98"), 29.98)
+    check("부호", ts.num("+18,675"), 18675.0)
+    check("없는 값", ts.num("N/A"), None)
+    check("빈 값", ts.num(""), None)
 
 
 def test_exact_theme_name_beats_a_shorter_substring():
