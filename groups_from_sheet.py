@@ -153,6 +153,21 @@ def main() -> int:
 
     groups = groups_from_grid(grid, wanted)
     if not groups:
+        # 무엇을 받았는지 남긴다. 병합 셀은 API 가 좌상단 한 칸에만 값을 주므로
+        # 드라이브로 볼 때와 모양이 다르다 -- 추측하지 말고 실물을 보고 맞춘다.
+        marks = [r for r in range(1, len(grid) + 1)
+                 if any(_cell(grid, r, c) == HEADER_MARK for c in range(1, 40))]
+        print(f"  [진단] 격자 {len(grid)}행, '종목명' 헤더가 있는 행 {len(marks)}개: "
+              f"{marks[-6:]}", file=sys.stderr)
+        for r in marks[-3:]:
+            a_near = [(rr, _cell(grid, rr, 0)) for rr in range(max(1, r - 2), r + 3)
+                      if _cell(grid, rr, 0)]
+            kw = [_cell(grid, r + 1, c) for c in range(1, 40)
+                  if _cell(grid, r, c) == HEADER_MARK]
+            print(f"  [진단] {r}행 주변 A열 {a_near} / 키워드 {kw}", file=sys.stderr)
+        a_vals = sorted({_cell(grid, r, 0) for r in range(1, len(grid) + 1)
+                         if _cell(grid, r, 0)})
+        print(f"  [진단] A열에 있는 값 {len(a_vals)}종: {a_vals[-12:]}", file=sys.stderr)
         # 오늘 블록이 비어 있는 것은 '조용한 날'이 아니라 아직 안 채워진 것이다.
         # 카드를 빈 채로 만들어 올리는 것보다 여기서 멈추는 편이 낫다.
         print(f"[중단] Daily 시트에서 {wanted} 블록을 찾지 못했거나 비어 있습니다.",
