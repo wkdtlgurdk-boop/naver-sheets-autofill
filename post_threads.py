@@ -116,7 +116,7 @@ def caption(groups: list[dict], now: datetime) -> str:
     lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "", "오늘의 테마"]
     for i, g in enumerate(cards.ranked(groups), 1):
         lines.append(f"{i}. {g['keyword']} {cards.avg_rate(g['top5']):+.2f}%")
-    lines += ["", "내일도 킁킁하러 오개"]
+    lines += ["", "오늘도 수고했개 🐾"]
 
     text = "\n".join(lines)
     if len(text) <= TEXT_LIMIT:
