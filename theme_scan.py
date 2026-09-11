@@ -338,8 +338,8 @@ def fetch_theme_list(opener):
             if page == 1:
                 print(f"[진단] 1페이지에서 테마 링크를 찾지 못했습니다. "
                       f"응답 {len(html):,}자.", file=sys.stderr)
-                print(f"[진단] 앞부분: {re.sub(r'[ \t]+', ' ', html[:600])!r}",
-                      file=sys.stderr)
+                head = re.sub(r"\s+", " ", html[:600])
+                print(f"[진단] 앞부분: {head!r}", file=sys.stderr)
                 for probe in ("sise_group_detail", "theme", "로그인", "점검",
                               "차단", "captcha", "Access Denied"):
                     if probe in html:
