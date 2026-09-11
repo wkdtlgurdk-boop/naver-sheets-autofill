@@ -34,7 +34,9 @@ CARD_REPO = os.environ.get("CARD_REPO", "wkdtlgurdk-boop/theme_bot")
 CARD_BRANCH = os.environ.get("CARD_BRANCH", "main")
 
 # 컨테이너를 만든 뒤 게시까지 두는 시간(초). 메타 문서가 권하는 값이다.
-SETTLE_SECONDS = int(os.environ.get("THREADS_SETTLE_SECONDS", "30"))
+SETTLE_SECONDS = int(os.environ.get("THREADS_SETTLE_SECONDS", "10"))
+READY_TRIES = 20          # 한 장당 최대 100초까지 기다린다
+READY_INTERVAL = 5
 MAX_ITEMS = 20        # 캐러셀 상한
 TEXT_LIMIT = 500      # 본문 글자수 상한
 
@@ -43,6 +45,42 @@ def give_up(why: str) -> int:
     print(f"[threads] 게시 건너뜀 — {why}", file=sys.stderr)
     print("[threads] 카드는 리포에 올라가 있습니다.", file=sys.stderr)
     return 0
+
+
+def get(path: str, params: dict) -> dict:
+    query = urllib.parse.urlencode(params)
+    req = urllib.request.Request(f"{API}/{path}?{query}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="ignore")[:300]
+        raise RuntimeError(f"{e.code} {path}: {body}") from None
+
+
+def wait_ready(container_id: str, token: str) -> None:
+    """메타가 이미지를 다 받아올 때까지 기다린다.
+
+    컨테이너를 만드는 요청은 즉시 아이디를 돌려주지만, 그 시점에 메타는 아직
+    우리 URL 에서 이미지를 가져오는 중이다(status=IN_PROGRESS). 그 상태의
+    아이디를 캐러셀 children 으로 넘기면 'invalid, nonexistent, or expired'
+    로 거부된다 — 2026-09-11 첫 게시 시도가 정확히 그렇게 죽었다. 마지막에
+    올린 장이 늘 제일 안 익어 있으므로 순서상 그 장이 걸린다.
+
+    그래서 캐러셀을 만들기 전에 각 장이 FINISHED 가 되기를 기다린다.
+    """
+    for _ in range(READY_TRIES):
+        got = get(container_id, {"fields": "status,error_message",
+                                 "access_token": token})
+        status = got.get("status")
+        if status == "FINISHED":
+            return
+        if status in ("ERROR", "EXPIRED"):
+            raise RuntimeError(
+                f"컨테이너 {container_id} 가 {status}: {got.get('error_message')}")
+        time.sleep(READY_INTERVAL)
+    raise RuntimeError(f"컨테이너 {container_id} 가 "
+                       f"{READY_TRIES * READY_INTERVAL}초 안에 준비되지 않았습니다")
 
 
 def call(path: str, params: dict) -> dict:
@@ -103,12 +141,18 @@ def main() -> int:
             children.append(got["id"])
             print(f"  올림 {p.name} -> {got['id']}", file=sys.stderr)
 
+        # 묶기 전에 전부 익기를 기다린다. 여기를 건너뛰면 마지막 장이 아직
+        # IN_PROGRESS 라 캐러셀이 통째로 거부된다.
+        for cid in children:
+            wait_ready(cid, token)
+        print(f"  {len(children)}장 준비 완료", file=sys.stderr)
+
         text = caption(groups, now)
         parent = call(f"{user_id}/threads", {
             "media_type": "CAROUSEL", "children": ",".join(children),
             "text": text, "access_token": token})
 
-        # 메타 서버가 이미지 열 몇 장을 가져올 시간을 준다.
+        # 캐러셀 컨테이너 자체도 잠깐 자리를 잡는다.
         time.sleep(SETTLE_SECONDS)
         posted = call(f"{user_id}/threads_publish", {
             "creation_id": parent["id"], "access_token": token})
