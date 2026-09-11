@@ -66,9 +66,8 @@ def status_mark(code):
 
 
 def main():
-    """MLCC 테마가 왜 조건충족에서 빠졌는지 종목 단위로 본다."""
+    """문턱 후보별로 금요일 종가에 무엇이 잡혔을지 센다. 고르기 위한 재료다."""
     import json as _json
-    MIN_CAP, MIN_RATE, SURGE_CAP, SURGE_RATE = 2000, 5.0, 500, 20.0
 
     def n(v):
         if v in (None, "", "N/A", "-"):
@@ -78,34 +77,51 @@ def main():
         except ValueError:
             return None
 
-    def why(rate, cap):
-        if rate >= SURGE_RATE and cap >= SURGE_CAP:
-            return "통과(급등)"
-        if rate >= MIN_RATE and cap >= MIN_CAP:
-            return "통과(일반)"
-        if rate < MIN_RATE:
-            return f"탈락: 상승률 {rate:.2f}% < {MIN_RATE:g}%"
-        return f"탈락: 시총 {cap:,.0f}억 < {MIN_CAP:,}억"
+    # (이름, 규칙) — 규칙은 (상승률, 시총) 쌍의 목록이고 하나라도 맞으면 통과
+    RULES = {
+        "현재":            [(5.0, 2000), (20.0, 500)],
+        "+10%/1,000억 추가": [(5.0, 2000), (10.0, 1000), (20.0, 500)],
+        "+15%/1,000억 추가": [(5.0, 2000), (15.0, 1000), (20.0, 500)],
+        "+10%/1,500억 추가": [(5.0, 2000), (10.0, 1500), (20.0, 500)],
+    }
+    MIN_COUNT, MIN_PART, PART_RATE = 3, 0.2, 3.0
 
-    # 405 = MLCC, 566 = 딥페이크, 55 = 보안주(정보), 426 = 양자암호
-    for no, label in ((405, "MLCC(적층세라믹콘덴서)"), (566, "딥페이크"),
-                      (55, "보안주(정보)")):
-        _, raw = get(f"https://m.stock.naver.com/api/stocks/theme/{no}?page=1&pageSize=100")
-        stocks = _json.loads(raw.decode()).get("stocks") or []
-        print(f"\n=== {label} — 구성 {len(stocks)}종목")
+    groups, seen = [], set()
+    for page in range(1, 4):
+        _, raw = get(f"https://m.stock.naver.com/api/stocks/theme?page={page}&pageSize=100")
+        gs = [g for g in _json.loads(raw.decode())["groups"] if g["no"] not in seen]
+        if not gs:
+            break
+        for g in gs:
+            seen.add(g["no"])
+        groups += gs
+    print(f"테마 {len(groups)}개 조회")
+
+    detail = {}
+    for g in groups:
+        _, raw = get(f"https://m.stock.naver.com/api/stocks/theme/{g['no']}?page=1&pageSize=100")
         rows = []
-        for st in stocks:
+        for st in _json.loads(raw.decode()).get("stocks") or []:
             rate, cap = n(st.get("fluctuationsRatio")), n(st.get("marketValue"))
-            if None in (rate, cap):
+            if None not in (rate, cap):
+                rows.append((st.get("stockName"), rate, cap))
+        detail[g["no"]] = rows
+
+    for label, rule in RULES.items():
+        hits = []
+        for g in groups:
+            rows = detail[g["no"]]
+            if not rows:
                 continue
-            rows.append((rate, cap, st.get("stockName"), why(rate, cap)))
-        rows.sort(key=lambda r: -r[0])
-        ok = 0
-        for rate, cap, name, verdict in rows:
-            mark = "O" if verdict.startswith("통과") else " "
-            ok += verdict.startswith("통과")
-            print(f"  {mark} {name:14} {rate:+7.2f}%  시총 {cap:>9,.0f}억   {verdict}")
-        print(f"  -> 조건충족 {ok}종목 (3종목 이상이어야 테마로 잡힘)")
+            ups = sum(1 for _, r, _c in rows if r >= PART_RATE)
+            if ups / len(rows) < MIN_PART:
+                continue
+            q = [nm for nm, r, c in rows if any(r >= mr and c >= mc for mr, mc in rule)]
+            if len(q) >= MIN_COUNT:
+                hits.append((g["name"], len(q)))
+        names = ", ".join(f"{nm}({c})" for nm, c in hits)
+        print(f"\n[{label}] 테마 {len(hits)}개")
+        print(f"   {names}")
     return 0
 
 
