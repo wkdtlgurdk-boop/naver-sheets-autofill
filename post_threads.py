@@ -99,16 +99,30 @@ def raw_url(path: Path, day: str) -> str:
             f"/cards/{day}/{urllib.parse.quote(path.name)}")
 
 
+def caption_date(now: datetime) -> str:
+    """'2026년 9월 11일'. 카드 위의 '2026.09.11 (금)' 과 달리 본문은 풀어 쓴다."""
+    return f"{now.year}년 {now.month}월 {now.day}일"
+
+
 def caption(groups: list[dict], now: datetime) -> str:
-    """본문. 카드를 못 여는 사람도 순위는 읽을 수 있게 텍스트로 남긴다."""
-    lines = [f"{cards.header_date(now)} 오늘의 테마", ""]
+    """본문. 카드를 못 여는 사람도 순위는 읽을 수 있게 텍스트로 남긴다.
+
+    해시태그는 달지 않는다. 스레드는 인스타처럼 태그를 여러 개 붙이는 곳이
+    아니라서 '#테마주 #주식 #급등주' 같은 줄이 광고처럼 읽힌다.
+
+    글머리에 '시황정리' 를 쓰는 이유: 캐러셀 첫 장이 지수·거래대금·외인
+    요약이고 그 뒤가 테마별 카드라, 글 전체를 묶는 말로는 테마보다 넓다.
+    """
+    lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "", "오늘의 테마"]
     for i, g in enumerate(cards.ranked(groups), 1):
         lines.append(f"{i}. {g['keyword']} {cards.avg_rate(g['top5']):+.2f}%")
+    lines += ["", "내일도 킁킁하러 오개"]
+
     text = "\n".join(lines)
-    tags = "\n\n#테마주 #주식 #급등주"
-    if len(text) + len(tags) <= TEXT_LIMIT:
-        return text + tags
-    return text[:TEXT_LIMIT]
+    if len(text) <= TEXT_LIMIT:
+        return text
+    # 테마가 많은 날은 꼬리 문구부터 버린다. 순위가 잘리는 것보다 낫다.
+    return "\n".join(lines[:-2])[:TEXT_LIMIT]
 
 
 def main() -> int:
