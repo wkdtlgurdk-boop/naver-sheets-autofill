@@ -105,20 +105,41 @@ def test_label_is_the_biggest_theme_not_the_shortest_name():
     check("큰 테마가 이름", [g["keyword"] for g in final], ["가상긴테마이름"])
 
 
-def test_surge_lowers_the_cap_floor_but_only_for_surges():
-    """20% 넘게 오른 종목은 시총 500억까지 받고, 그 아래는 2000억 그대로.
+def test_three_thresholds_each_do_their_own_job():
+    """문턱이 셋이고 각각 다른 구간을 맡는다.
 
-    9/8 테라뷰(+29.96%, 1,076억)와 빛과전자의 테마 동료들이 여기서 갈린다.
-    완화가 상승률과 무관하게 걸리면 시총 500억대가 5% 오른 것까지 들어와
-    대표주 자리를 채우므로, 두 조건은 반드시 함께 걸려야 한다.
+    9/8 테라뷰(+29.96%, 1,076억)와 9/11 아바텍(+14.02%, 1,412억)이 여기서
+    갈린다. 완화가 상승률과 무관하게 걸리면 시총 500억대가 5% 오른 것까지
+    들어와 대표주 자리를 채우므로, 각 조건은 반드시 짝으로 걸려야 한다.
     """
-    check("급등+중소형 통과", ts.qualifies(29.96, 1076), True)
-    check("급등이어도 500억 미만 탈락", ts.qualifies(29.96, 300), False)
-    check("5%대는 완화 없음", ts.qualifies(5.54, 577), False)
-    check("5%대 대형주는 통과", ts.qualifies(5.54, 4102), True)
-    check("20% 경계 포함", ts.qualifies(20.0, 500), True)
+    check("대형주 일반", ts.qualifies(5.54, 4102), True)
     check("5% 경계 포함", ts.qualifies(5.0, 2000), True)
     check("4.9% 는 탈락", ts.qualifies(4.9, 99999), False)
+    check("5%대 중형주는 탈락", ts.qualifies(5.54, 577), False)
+
+    check("급등+소형 통과", ts.qualifies(29.96, 1076), True)
+    check("20% 경계 포함", ts.qualifies(20.0, 500), True)
+    check("급등이어도 500억 미만 탈락", ts.qualifies(29.96, 300), False)
+
+
+def test_the_middle_tier_catches_the_gap_that_dropped_mlcc():
+    """+10~15% 구간의 1,000~2,000억 종목을 버리지 않는다.
+
+    2026-09-11 MLCC 테마는 등락률 1위(+7.69%)였는데도 조건충족 2종목으로
+    탈락했다. 아바텍(+14.02%, 1,412억)이 시총에서 걸렸기 때문이다. 중간
+    문턱을 더해 그 한 종목이 들어오면 3종목이 되어 테마가 산다.
+    """
+    check("아바텍 통과", ts.qualifies(14.02, 1412), True)
+    check("12% 경계 포함", ts.qualifies(12.0, 1000), True)
+    check("11.9% 는 탈락", ts.qualifies(11.9, 1999), False)
+    check("12% 여도 1,000억 미만 탈락", ts.qualifies(12.0, 999), False)
+    # 코칩은 시총이 문턱을 넘지만 상승률이 12% 에 못 미쳐 여전히 탈락한다.
+    check("코칩은 그대로 탈락", ts.qualifies(10.36, 1868), False)
+
+    mlcc = [(29.98, 2826), (18.76, 14283), (14.02, 1412), (10.36, 1868),
+            (8.67, 678), (3.65, 727), (0.0, 1045712), (-1.47, 13352)]
+    check("MLCC 조건충족 3종목",
+          sum(ts.qualifies(r, c) for r, c in mlcc), 3)
 
 
 def fake_list(pages):

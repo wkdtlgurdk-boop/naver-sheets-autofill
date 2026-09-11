@@ -31,6 +31,8 @@ HEADERS = {
 }
 MIN_CAP = 2000       # 억원
 MIN_RATE = 5.0        # %
+MID_CAP = 1000       # 억원 — 중간 문턱. 크게 오른 중형주를 받는다
+MID_RATE = 12.0       # %
 SURGE_CAP = 500      # 억원 — 급등주에만 적용하는 완화 문턱
 SURGE_RATE = 20.0     # %
 MIN_COUNT = 3          # qualifying stocks needed for a theme to count
@@ -308,6 +310,12 @@ def qualifies(rate, cap):
     문턱이 둘이다. 평소에는 시총 2000억 이상이 5% 넘게 오른 경우지만,
     20% 넘게 오른 종목은 시총 500억까지 받는다.
 
+    문턱이 셋이다. 2026-09-11 에 중간 단계를 더했다. 그 전에는 시총 2,000억
+    미만은 20% 넘게 오르지 않는 한 전부 버려져서, +10~15% 구간의 1,000~2,000억
+    종목이 통째로 사각지대였다. 그날 MLCC 테마가 등락률 1위(+7.69%)였는데도
+    조건충족 2종목으로 탈락했다 — 아바텍(+14.02%, 1,412억)과 코칩(+10.36%,
+    1,868억)이 시총에서 걸렸고, 코칩은 문턱과 132억 차이였다.
+
     단일 시총 문턱은 두 번 작동해서, 대표종목을 고를 때만이 아니라 테마가
     살아 있는지 셀 때도 걸린다. 9/8 광통신 테마는 5% 넘게 오른 종목이 실제로
     둘이었는데(빛과전자 +30.00%/4,102억, 한국첨단소재 +5.54%/577억) 시총이
@@ -316,6 +324,8 @@ def qualifies(rate, cap):
     반응한 곳이므로, 그 구간에서만 시총을 낮춰 센다.
     """
     if rate >= SURGE_RATE and cap >= SURGE_CAP:
+        return True
+    if rate >= MID_RATE and cap >= MID_CAP:
         return True
     return rate >= MIN_RATE and cap >= MIN_CAP
 

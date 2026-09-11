@@ -82,7 +82,8 @@ def header_date(now: datetime) -> str:
 def footer_text() -> str:
     """조건을 카드 밑에 적어 둔다. theme_scan 의 상수에서 만들어야 낡지 않는다."""
     return (f"시가총액 {ts.MIN_CAP:,}억↑·상승률 {ts.MIN_RATE:g}%↑ "
-            f"({ts.SURGE_RATE:g}%↑는 {ts.SURGE_CAP:,}억↑) 종목 {ts.MIN_COUNT}개 이상인 테마")
+            f"({ts.MID_RATE:g}%↑는 {ts.MID_CAP:,}억↑, {ts.SURGE_RATE:g}%↑는 "
+            f"{ts.SURGE_CAP:,}억↑) 종목 {ts.MIN_COUNT}개 이상인 테마")
 
 
 def eok(amount_mn: float) -> int:
