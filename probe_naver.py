@@ -19,23 +19,24 @@ HEADERS = {
 }
 
 CANDIDATES = [
-    # 지금 멀쩡히 도는 급증 봇이 쓰는 것들 — 대조군
-    "https://stock.naver.com/api/domestic/market/stock/default?tradeType=KRX&marketType=ALL&orderType=upperQuantTop&startIdx=0&pageSize=5",
-    "https://api.stock.naver.com/chart/domestic/item/005930/day?startDateTime=202609010000&endDateTime=202609110000",
-    # 테마 후보
-    "https://api.stock.naver.com/theme",
-    "https://api.stock.naver.com/theme/list",
-    "https://api.stock.naver.com/theme?page=1&pageSize=20",
-    "https://stock.naver.com/api/domestic/theme",
-    "https://stock.naver.com/api/domestic/theme/list",
-    "https://stock.naver.com/api/domestic/market/theme",
+    # 1차에서 살아 있는 것으로 확인된 테마 목록. 페이지 파라미터를 찾는다.
     "https://m.stock.naver.com/api/stocks/theme",
-    "https://m.stock.naver.com/api/json/sise/siseListJson.nhn?menu=theme",
-    # 지수 (market_summary 대체 후보)
-    "https://api.stock.naver.com/index/KOSPI/basic",
+    "https://m.stock.naver.com/api/stocks/theme?page=2",
+    "https://m.stock.naver.com/api/stocks/theme?page=1&pageSize=100",
+    "https://m.stock.naver.com/api/stocks/theme?size=100",
+    # 테마 하나(405 = MLCC)의 구성 종목을 어디서 주는지
+    "https://m.stock.naver.com/api/stocks/theme/405",
+    "https://m.stock.naver.com/api/stocks/theme/405/stocks",
+    "https://m.stock.naver.com/api/stocks/theme/405/item",
+    "https://m.stock.naver.com/api/stocks/theme/405/price",
+    "https://m.stock.naver.com/api/stocks/theme/405?page=1&pageSize=100",
+    # 지수: 거래대금과 외인 순매수가 어디에 있는지
     "https://m.stock.naver.com/api/index/KOSPI/basic",
     "https://m.stock.naver.com/api/index/KOSPI/price?pageSize=1&page=1",
+    "https://m.stock.naver.com/api/index/KOSPI/investorTrend",
+    "https://m.stock.naver.com/api/index/KOSPI/trend",
 ]
+
 
 
 def get(url, timeout=15):
@@ -54,7 +55,7 @@ def show(url):
         print(f"  ✗  ERR  {url}  ({type(e).__name__}: {e})")
         return None
     body = raw.decode("utf-8", errors="replace")
-    head = re.sub(r"\s+", " ", body[:240])
+    head = re.sub(r"\s+", " ", body[:900])
     print(f"  ✓  {status} {len(raw):>8,}B  {url}")
     print(f"        {head}")
     return body
@@ -71,7 +72,10 @@ def main():
     for url in CANDIDATES:
         show(url)
 
-    print()
+    return 0
+
+
+def _unused():
     print("=" * 70)
     print("2) 새 테마 페이지 안에서 단서 찾기")
     print("=" * 70)
