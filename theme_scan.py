@@ -35,7 +35,7 @@ SURGE_CAP = 500      # 억원 — 급등주에만 적용하는 완화 문턱
 SURGE_RATE = 20.0     # %
 MIN_COUNT = 3          # qualifying stocks needed for a theme to count
 MERGE_THRESHOLD = 0.6  # overlap coefficient for auto-merge
-SCAN_PAGES = 1         # 목록에서 읽을 페이지 수
+SCAN_PAGES = 3         # 목록 전체를 읽는다 (2026-09-11 실측 266개 = 3페이지)
 PAGE_SIZE = 100        # 한 페이지에 받는 테마 수 (등락률 내림차순 상위)
 PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
 MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
@@ -332,9 +332,14 @@ def fetch_theme_list():
         riseCount          그중 오른 종목 수   -> 참여율을 셀 필요가 없다
         changeRate         테마 전체 등락률
 
-    목록이 등락률 내림차순이라 앞쪽이 오늘 움직인 테마다. 예전에는 그 정렬을
-    '그럴 것이다' 하고 믿어야 했지만 이제 changeRate 가 값으로 오므로 가정이
-    아니다. 한 페이지에 PAGE_SIZE 개씩, SCAN_PAGES 페이지까지 읽는다.
+    목록은 등락률 내림차순이지만 그 순서로 자르면 안 된다. 2026-09-11 실측:
+    조건을 충족한 테마 8개 중 4개가 100위 밖이었다 — 전기차(142위, -0.42%),
+    밸류업(151위), 반도체 재료/부품(211위), 2차전지(214위, -1.10%).
+
+    테마 평균 등락률과 '그 안에 급등주가 3개 있느냐'는 별개이기 때문이다.
+    구성 종목이 수십 개인 테마는 평균이 마이너스여도 그 안에 조건을 넘긴
+    대형주가 셋 있을 수 있다. 평균은 구성종목이 많을수록 희석되므로, 등락률로
+    자르면 크고 무거운 테마가 통째로 잘린다. 그래서 전부 읽는다.
     """
     seen, order = set(), []
     for page in range(1, SCAN_PAGES + 1):
@@ -386,31 +391,22 @@ def scan_themes():
     results = []
     for t in themes:
         name = t.get("name") or str(t.get("no"))
-        members = int(t.get("totalCount") or 0)
-        ups = int(t.get("riseCount") or 0)
-
-        # 참여율은 목록에서 이미 알 수 있다. 여기서 걸러내면 죽은 테마의 상세를
-        # 받지 않아도 되므로 요청이 크게 준다 — 예전에는 전부 받아본 뒤에야
-        # 버릴 수 있었다.
-        if members and ups / members < MIN_PARTICIPATION:
-            continue
-
         stocks = fetch_theme_stocks(t["no"])
         qualifying = [s for s in stocks if qualifies(s["rate"], s["cap"])]
         if len(qualifying) >= MIN_COUNT:
             results.append({
                 "theme_name": name,
                 "theme_id": str(t["no"]),
-                "member_count": members,
-                "up_count": ups,
+                # 참여율은 구성종목의 등락률로 직접 센다. 목록이 주는 riseCount
+                # 는 '조금이라도 오른' 종목이라 너무 관대하다 — 2026-09-11 실측
+                # 으로 266개 중 225개(85%)가 통과해 거르는 구실을 못 했다.
+                "member_count": len(stocks),
+                "up_count": sum(1 for s in stocks
+                                if s["rate"] >= PARTICIPATION_RATE),
                 "avg_rate": num(t.get("changeRate")),
                 "qualifying": qualifying,
             })
         time.sleep(0.12)
-
-    print(f"themes fetched in detail: "
-          f"{sum(1 for t in themes if t.get('totalCount') and t.get('riseCount', 0) / t['totalCount'] >= MIN_PARTICIPATION)}",
-          file=sys.stderr)
     return results
 
 

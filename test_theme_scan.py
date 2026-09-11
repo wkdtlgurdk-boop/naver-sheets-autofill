@@ -145,16 +145,19 @@ def listed(no, name, total=10, rise=5, rate="3.00"):
             "riseCount": rise, "changeRate": rate}
 
 
-def test_theme_list_stops_at_the_page_limit():
-    """목록은 SCAN_PAGES 페이지에서 끊는다.
+def test_theme_list_reads_every_page():
+    """목록을 등락률 순으로 자르지 않는다.
 
-    목록은 등락률 내림차순이라 앞쪽이 오늘 움직인 테마다. 한 페이지에
-    PAGE_SIZE(100)개를 받으므로 한 페이지면 상위 100개가 들어온다.
+    2026-09-11 실측: 조건을 충족한 테마 8개 중 4개가 등락률 100위 밖이었다
+    (전기차 142위 -0.42%, 2차전지 214위 -1.10%). 테마 평균 등락률과 '그 안에
+    급등주가 3개 있느냐'는 별개이고, 구성종목이 많은 테마일수록 평균이
+    희석되므로 순위로 자르면 크고 무거운 테마가 통째로 잘린다.
     """
-    pages = {1: [listed(1, "가"), listed(2, "나")], 2: [listed(3, "다")]}
+    pages = {1: [listed(1, "가"), listed(2, "나")],
+             2: [listed(3, "다")], 3: [listed(4, "라")]}
     got, calls = fake_list(pages)
-    check("첫 페이지까지만", [g["name"] for g in got], ["가", "나"])
-    check("두 번째 페이지는 안 부름", calls, ts.SCAN_PAGES)
+    check("세 페이지 다 읽음", [g["name"] for g in got], ["가", "나", "다", "라"])
+    check("페이지 수만큼 부름", calls, ts.SCAN_PAGES)
 
 
 def test_theme_list_stops_early_when_a_page_repeats():
@@ -169,14 +172,39 @@ def test_theme_list_stops_early_when_a_page_repeats():
     check("반복을 확인하는 한 번만 더", calls, 3)
 
 
-def test_scan_skips_the_detail_call_for_a_dead_theme():
-    """참여율이 낮은 테마는 상세를 받지 않는다.
+def test_scan_counts_participation_from_the_stocks_themselves():
+    """참여율은 구성종목의 등락률로 직접 센다.
 
-    예전에는 전부 받아본 뒤에야 버릴 수 있었다. 목록이 totalCount/riseCount 를
-    주므로 이제 요청 전에 거를 수 있고, 그만큼 요청이 줄어든다.
+    목록이 주는 riseCount 는 '조금이라도 오른' 종목이라 너무 관대하다 —
+    2026-09-11 실측으로 266개 중 225개(85%)가 통과해 거르는 구실을 못 했다.
+    원래 의도대로 PARTICIPATION_RATE 이상 오른 종목만 센다.
     """
-    rows = [listed(1, "살아있음", total=10, rise=6),
-            listed(2, "죽은테마", total=40, rise=3)]
+    rows = [listed(1, "테마", total=99, rise=99)]   # 목록은 전부 올랐다고 말한다
+
+    def fake_stocks(no):
+        # 실제로는 다섯 중 셋만 3% 이상이다.
+        rates = [9.0, 8.0, 7.0, 0.5, 0.2]
+        return [{"name": f"종목{i}", "code": f"{i:06d}", "rate": r,
+                 "cap": 5000, "amount": 100} for i, r in enumerate(rates)]
+
+    real_list, real_stocks, real_sleep = (
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep)
+    ts.fetch_theme_list = lambda: rows
+    ts.fetch_theme_stocks = fake_stocks
+    ts.time.sleep = lambda _s: None
+    try:
+        out = ts.scan_themes()
+    finally:
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep = (
+            real_list, real_stocks, real_sleep)
+    check("목록의 99/99 를 믿지 않음",
+          (out[0]["member_count"], out[0]["up_count"]), (5, 3))
+    check("참여율 60%", ts.participation(out[0]), 0.6)
+
+
+def test_scan_fetches_every_theme_it_listed():
+    """목록 단계에서 미리 버리지 않는다 — 평균이 낮아도 상세를 봐야 안다."""
+    rows = [listed(1, "평균낮음", total=40, rise=3), listed(2, "평균높음")]
     asked = []
 
     def fake_stocks(no):
@@ -194,10 +222,8 @@ def test_scan_skips_the_detail_call_for_a_dead_theme():
     finally:
         ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep = (
             real_list, real_stocks, real_sleep)
-    check("산 테마만 상세 조회", asked, [1])
-    check("결과도 하나", [t["theme_name"] for t in out], ["살아있음"])
-    check("목록이 준 값을 그대로 담음",
-          (out[0]["member_count"], out[0]["up_count"]), (10, 6))
+    check("둘 다 상세 조회", asked, [1, 2])
+    check("둘 다 결과에", [t["theme_name"] for t in out], ["평균낮음", "평균높음"])
 
 
 def test_numbers_come_out_of_naver_strings():
