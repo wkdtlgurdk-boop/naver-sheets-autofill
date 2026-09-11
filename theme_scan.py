@@ -332,6 +332,19 @@ def fetch_theme_list(opener):
         html = fetch(opener, f"https://finance.naver.com/sise/theme.naver?&page={page}")
         new = [(tid, name) for tid, name in pat.findall(html) if tid not in seen]
         if not new:
+            # 1페이지부터 비면 '끝'이 아니라 못 읽은 것이다. 여기서 응답을 그대로
+            # 남긴다 — 네이버에 직접 붙어볼 수 없는 환경에서 이 몇 줄이 차단인지
+            # HTML 변경인지 빈 응답인지를 가른다.
+            if page == 1:
+                print(f"[진단] 1페이지에서 테마 링크를 찾지 못했습니다. "
+                      f"응답 {len(html):,}자.", file=sys.stderr)
+                print(f"[진단] 앞부분: {re.sub(r'[ \t]+', ' ', html[:600])!r}",
+                      file=sys.stderr)
+                for probe in ("sise_group_detail", "theme", "로그인", "점검",
+                              "차단", "captcha", "Access Denied"):
+                    if probe in html:
+                        print(f"[진단] '{probe}' 문자열은 응답에 있습니다.",
+                              file=sys.stderr)
             break
         for tid, name in new:
             seen.add(tid)
