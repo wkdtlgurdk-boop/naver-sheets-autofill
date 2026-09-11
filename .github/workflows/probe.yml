@@ -1,0 +1,18 @@
+name: probe-naver
+
+# 일회용 진단. 네이버가 테마 목록을 어디로 옮겼는지 러너가 찔러보고 로그로 남긴다.
+# 이 세션에서는 finance.naver.com 에 직접 붙을 수 없어서 필요한 우회로다.
+# 새 경로를 찾아 theme_scan.py 를 옮기고 나면 이 워크플로와 probe_naver.py 는 지운다.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python probe_naver.py
