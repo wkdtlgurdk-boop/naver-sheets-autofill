@@ -1,0 +1,180 @@
+#!/usr/bin/env python3
+"""오늘 블록을 Daily 시트에서 읽어 final_groups.json 으로 만든다.
+
+    python groups_from_sheet.py            # final_groups.json 기록
+    python groups_from_sheet.py --dry-run  # 읽고 출력만
+
+## 왜 이게 필요한가
+
+카드는 theme_scan.py 가 만든 final_groups.json 을 읽는다. 그런데 네이버가
+2026-09-10 저녁 사이 금융 사이트를 Next.js 로 다시 만들면서 finance.naver.com
+/sise/* 가 서버 렌더 표를 더 이상 주지 않는다(어느 경로로 들어가도 같은 120KB
+React 껍데기). 그래서 스캔이 0개로 멈추고, 그 뒤 카드도 스레드도 통째로 못 간다.
+
+하지만 **테마 분석 결과는 이미 시트에 있다.** 스캔을 되살리지 않아도 카드는
+만들 수 있다 -- 시트가 종목명·상승률·거래대금을 그대로 들고 있고, 카드가
+요구하는 것이 정확히 그 셋이기 때문이다(종목코드는 카드가 쓰지 않는다).
+
+읽는 자리는 theme_write.write_daily 가 쓰는 자리와 같다.
+
+    header_row      A열에 'M/D', 슬롯 열에 '종목명'
+    header_row + 1  슬롯 첫 열에 키워드 (나머지 두 칸은 AVERAGEA/SUM 수식)
+    header_row + 2~ 종목명 / 상승률 / 거래대금(억), 최대 5행
+
+거래대금 단위에 주의. 시트는 **억**으로 보여주고 final_groups.json 은 **백만원**
+으로 담는다(cards.eok 가 100 으로 나눠 억을 만든다). 그래서 여기서 100 을 곱한다.
+틀리면 카드에 100배 틀린 금액이 공개로 올라간다.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
+DAILY_ID = "1xq_WNQh04xV1UsLm9ZRL6HhkQIJn-34G41zm87oR2h4"
+SEARCH_ROWS = 700
+CARD_ROWS = 5      # 카드가 그리는 줄 수
+MAX_STOCKS = 15    # 블록이 이보다 길 수는 없다. 다음 블록으로 넘어가는 것을 막는 상한.
+HEADER_MARK = "종목명"
+
+
+def _cell(grid: list[list], row: int, col: int) -> str:
+    """1-based 행, 0-based 열. 범위를 벗어나면 빈 문자열."""
+    r = grid[row - 1] if 0 < row <= len(grid) else []
+    return str(r[col]).strip() if col < len(r) else ""
+
+
+def parse_rate(text: str) -> float | None:
+    """'12.34%' -> 12.34. 퍼센트 서식이라 읽는 방식에 따라 0.1234 로도 온다.
+
+    표시값(read_formatted)을 쓰면 언제나 '12.34%' 꼴이므로 그것을 기준으로 삼되,
+    숫자만 온 경우도 받아 준다.
+    """
+    text = str(text).strip().replace(",", "")
+    if not text:
+        return None
+    m = re.match(r"^([+-]?\d+(?:\.\d+)?)\s*%$", text)
+    if m:
+        return float(m.group(1))
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def parse_amount_eok(text: str) -> int | None:
+    """'1,689' -> 1689. 시트의 거래대금 열은 억 단위다."""
+    text = str(text).strip().replace(",", "")
+    if not text:
+        return None
+    try:
+        return int(round(float(text)))
+    except ValueError:
+        return None
+
+
+def find_header_row(grid: list[list], wanted: str) -> int | None:
+    """A열이 오늘이면서 '종목명' 헤더를 가진 행.
+
+    날짜만으로 찾으면 안 된다 -- 블록은 날짜 셀이 세로로 병합돼 있어서 같은
+    날짜가 여러 행에 걸쳐 보이고, 그중 헤더행은 하나뿐이다.
+    """
+    for row in range(1, len(grid) + 1):
+        if _cell(grid, row, 0) != wanted:
+            continue
+        if any(_cell(grid, row, c) == HEADER_MARK for c in range(1, 40)):
+            return row
+    return None
+
+
+def groups_from_grid(grid: list[list], wanted: str) -> list[dict]:
+    """오늘 블록 -> cards.py 가 먹는 그룹 목록. 빈 슬롯은 건너뛴다."""
+    header_row = find_header_row(grid, wanted)
+    if header_row is None:
+        return []
+
+    slots = [c for c in range(1, 40) if _cell(grid, header_row, c) == HEADER_MARK]
+    groups = []
+    for slot in slots:
+        keyword = _cell(grid, header_row + 1, slot)
+        if not keyword or keyword.startswith("#"):   # #DIV/0! 같은 빈 슬롯
+            continue
+
+        # 줄 수를 5로 고정하지 않는다. 9/11 우주/방산 블록에는 종목이 여섯 개
+        # 들어 있었고(사람이 늘렸거나 예전 판이 썼거나), 다섯에서 자르면 카드
+        # 합계가 시트 대표행과 1,935억 어긋났다. 끝까지 읽어 개수를 세고,
+        # 카드에 그리는 것만 다섯으로 자른다.
+        stocks = []
+        for i in range(1, MAX_STOCKS + 1):
+            row = header_row + 1 + i
+            name = _cell(grid, row, slot)
+            if not name:
+                break      # 빈 줄이 블록의 끝이다
+            rate = parse_rate(_cell(grid, row, slot + 1))
+            amount_eok = parse_amount_eok(_cell(grid, row, slot + 2))
+            if rate is None or amount_eok is None:
+                continue
+            # 시트는 억, final_groups 는 백만원 (cards.eok 가 100 으로 나눈다)
+            stocks.append({"name": name, "code": "", "rate": rate,
+                           "amount": amount_eok * 100})
+
+        if not stocks:
+            continue
+        groups.append({
+            "keyword": keyword,
+            # 시트는 병합 전 원본 테마명을 들고 있지 않다. 카드 하단 줄에는
+            # 키워드를 그대로 쓴다 -- 없는 것을 지어내는 것보다 낫다.
+            "source_themes": [keyword],
+            # 카드가 "조건 충족 N종목 중 상위 M개" 로 쓰는 자리다. N 은 블록에
+            # 실제로 든 수여야 한다 -- 자른 뒤의 수를 넣으면 언제나 "5 중 5" 다.
+            "total_qualifying": len(stocks),
+            "top5": stocks[:CARD_ROWS],
+        })
+    return groups
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true", help="파일을 쓰지 않고 출력만")
+    ap.add_argument("--date", help="M/D 를 직접 지정 (기본: 오늘)")
+    args = ap.parse_args()
+
+    from sheets import Spreadsheet
+    from theme_write import resolve_daily_gid
+
+    now = datetime.now(KST)
+    wanted = args.date or f"{now.month}/{now.day}"
+    book = Spreadsheet(DAILY_ID)
+    gid = resolve_daily_gid(book, now)
+    grid = book.read_formatted(gid, f"A1:AN{SEARCH_ROWS}")
+
+    groups = groups_from_grid(grid, wanted)
+    if not groups:
+        # 오늘 블록이 비어 있는 것은 '조용한 날'이 아니라 아직 안 채워진 것이다.
+        # 카드를 빈 채로 만들어 올리는 것보다 여기서 멈추는 편이 낫다.
+        print(f"[중단] Daily 시트에서 {wanted} 블록을 찾지 못했거나 비어 있습니다.",
+              file=sys.stderr)
+        return 1
+
+    print(f"{wanted} 블록에서 {len(groups)}개 그룹:")
+    for g in groups:
+        head = g["top5"][0]
+        print(f"  [{g['keyword']}] {len(g['top5'])}종목, "
+              f"1위 {head['name']} {head['rate']:+.2f}% "
+              f"거래대금 합계 {sum(s['amount'] for s in g['top5']) // 100:,}억")
+
+    if args.dry_run:
+        print("dry-run — final_groups.json 을 쓰지 않았습니다")
+        return 0
+
+    with open("final_groups.json", "w", encoding="utf-8") as f:
+        json.dump(groups, f, ensure_ascii=False, indent=2)
+    print(f"final_groups.json 기록 ({len(groups)}개 그룹)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -23,6 +23,10 @@ on:
         description: "시트에 쓰지 않고 카드/게시만 (오늘 블록이 이미 찬 날 시험용)"
         type: boolean
         default: false
+      skip_threads:
+        description: "카드만 만들고 스레드에는 올리지 않음 (내용 확인용)"
+        type: boolean
+        default: false
 
 concurrency:
   group: theme-calendar
@@ -55,6 +59,7 @@ jobs:
           python test_theme_scan.py
           python test_llm_group.py
           python test_theme_write.py
+          python test_groups_from_sheet.py
 
       # Scan finance.naver.com's theme pages and merge overlapping themes.
       # The list is ordered by today's move, so only its first SCAN_PAGES pages
@@ -113,6 +118,23 @@ jobs:
       # on a day the sheet write fails. The font package carries the Black and
       # Medium weights the layout uses; without -extra it falls back to Bold
       # and the lines get heavier, which the layout test would catch.
+      # 스캔이 죽어도 카드는 만들 수 있다. 테마 분석 결과는 이미 시트에 있고,
+      # 카드가 쓰는 것(종목명·상승률·거래대금)이 거기 그대로 있기 때문이다.
+      # 네이버가 /sise/* 를 클라이언트 렌더로 바꾼 뒤로 스캔이 0개로 멈추는데,
+      # 그때 하루치 카드와 게시가 통째로 날아가는 것을 막는다. 스캔이 살아 있으면
+      # 이 단계는 아무것도 하지 않는다.
+      - name: 스캔이 비면 시트에서 그룹 복원
+        if: ${{ !cancelled() }}
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [ -s final_groups.json ]; then
+            echo "스캔 결과가 있어 시트를 읽지 않습니다."
+          else
+            echo "final_groups.json 이 없습니다 — Daily 시트에서 오늘 블록을 읽습니다."
+            python groups_from_sheet.py
+          fi
+
       - name: Install Korean fonts
         if: ${{ !cancelled() }}
         run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-cjk-extra
@@ -159,7 +181,7 @@ jobs:
       # Threads long-lived token lasts 60 days; a lapsed one should not turn
       # the day's sheet run red when the cards are already published.
       - name: Post to Threads
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && inputs.skip_threads != true }}
         env:
           # 위 CARD_REPO_TOKEN 과 같은 이유로 두 이름을 모두 받는다.
           THREADS_USER_ID: ${{ secrets.THREADS_USER_ID || secrets.THREADUSERID }}
