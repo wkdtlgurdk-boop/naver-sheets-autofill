@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import unittest
 
-from groups_from_sheet import (groups_from_grid, find_header_row,
+from groups_from_sheet import (block_date, find_header_row, groups_from_grid,
                                parse_amount_eok, parse_rate)
 
 
@@ -61,6 +61,23 @@ class HeaderRow(unittest.TestCase):
 
     def test_없는_날짜는_None(self):
         self.assertIsNone(find_header_row(sample(), "9/12"))
+
+    def test_병합_날짜가_헤더행_위에_있어도_찾는다(self):
+        # Sheets API 는 병합 범위의 값을 좌상단 한 칸에만 준다. 좌상단이
+        # 헤더행보다 위면 헤더행의 A 는 비어 있다 -- 위로 훑어야 찾는다.
+        g = sample()
+        g[5 - 1][0] = ""          # 헤더행 A 를 비우고
+        g[4 - 1][0] = "9/11"      # 한 칸 위에 날짜를 둔다
+        self.assertEqual(block_date(g, 5), "9/11")
+        self.assertEqual(find_header_row(g, "9/11"), 5)
+
+    def test_아래_블록의_날짜를_끌어오지_않는다(self):
+        # 위로만 훑는다. 아래 블록 날짜를 집으면 남의 날을 오늘로 읽는다.
+        g = sample()
+        g[5 - 1][0] = ""
+        g[4 - 1][0] = ""
+        g[3 - 1][0] = "9/10"      # 위에 있는 것은 어제뿐
+        self.assertIsNone(find_header_row(g, "9/11"))
 
 
 class Groups(unittest.TestCase):

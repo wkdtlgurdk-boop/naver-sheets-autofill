@@ -76,16 +76,31 @@ def parse_amount_eok(text: str) -> int | None:
         return None
 
 
-def find_header_row(grid: list[list], wanted: str) -> int | None:
-    """A열이 오늘이면서 '종목명' 헤더를 가진 행.
+def block_date(grid: list[list], header_row: int, look_up: int = 6) -> str:
+    """이 블록의 날짜. 헤더행에서 위로 올라가며 처음 만나는 A열 값이다.
 
-    날짜만으로 찾으면 안 된다 -- 블록은 날짜 셀이 세로로 병합돼 있어서 같은
-    날짜가 여러 행에 걸쳐 보이고, 그중 헤더행은 하나뿐이다.
+    날짜 셀은 블록 전체에 걸쳐 세로 병합돼 있는데, Sheets API 는 병합 범위의
+    값을 **좌상단 한 칸에만** 준다(드라이브로 내보내면 모든 행에 반복돼 보여서
+    모양이 다르다). 좌상단이 헤더행일 수도, 그 위일 수도 있으므로 한 칸만
+    보면 안 되고 위로 훑어야 한다.
     """
-    for row in range(1, len(grid) + 1):
-        if _cell(grid, row, 0) != wanted:
-            continue
-        if any(_cell(grid, row, c) == HEADER_MARK for c in range(1, 40)):
+    for row in range(header_row, max(0, header_row - look_up), -1):
+        value = _cell(grid, row, 0)
+        if value:
+            return value
+    return ""
+
+
+def header_rows(grid: list[list]) -> list[int]:
+    """'종목명' 헤더를 가진 행들 = 블록의 시작점들."""
+    return [r for r in range(1, len(grid) + 1)
+            if any(_cell(grid, r, c) == HEADER_MARK for c in range(1, 40))]
+
+
+def find_header_row(grid: list[list], wanted: str) -> int | None:
+    """날짜가 `wanted` 인 블록의 헤더행."""
+    for row in header_rows(grid):
+        if block_date(grid, row) == wanted:
             return row
     return None
 
