@@ -132,7 +132,10 @@ jobs:
       - name: Publish cards to theme_bot
         if: ${{ !cancelled() }}
         env:
-          CARD_REPO_TOKEN: ${{ secrets.CARD_REPO_TOKEN }}
+          # 밑줄 없는 이름으로 먼저 등록돼 있어서 둘 다 받는다. 시크릿은
+          # 이름을 고칠 수 없고 값을 다시 붙여넣는 것도 번거로우므로, 맞는
+          # 이름이 있으면 그것을, 없으면 처음 쓰던 이름을 쓴다.
+          CARD_REPO_TOKEN: ${{ secrets.CARD_REPO_TOKEN || secrets.CARDREPOTOKEN }}
         run: |
           if [ -z "$CARD_REPO_TOKEN" ]; then
             echo "CARD_REPO_TOKEN 이 없어 카드를 공개 리포에 올리지 않습니다."
@@ -158,8 +161,9 @@ jobs:
       - name: Post to Threads
         if: ${{ !cancelled() }}
         env:
-          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
-          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          # 위 CARD_REPO_TOKEN 과 같은 이유로 두 이름을 모두 받는다.
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID || secrets.THREADUSERID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN || secrets.THREADACCESSTOKEN }}
         run: python post_threads.py
 
       # Keep the day's grouping and exclusions in the repo so they can be read
