@@ -66,53 +66,32 @@ def status_mark(code):
 
 
 def main():
-    print("=" * 70)
-    print("1) 후보 엔드포인트")
-    print("=" * 70)
-    for url in CANDIDATES:
+    """지수 응답의 전체 키를 본다 — 거래대금(조)이 어디 있는지."""
+    import json as _json
+    for code in ("KOSPI", "KOSDAQ"):
+        for path in ("basic", "trend"):
+            url = f"https://m.stock.naver.com/api/index/{code}/{path}"
+            try:
+                _, raw = get(url)
+            except Exception as e:  # noqa: BLE001
+                print(f"  ✗ {url} — {e}")
+                continue
+            data = _json.loads(raw.decode("utf-8"))
+            print(f"\n=== {url}")
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    if isinstance(v, (str, int, float)) or v is None:
+                        print(f"   {k} = {v!r}")
+                    else:
+                        print(f"   {k} : {type(v).__name__}")
+            else:
+                print(f"   {str(data)[:400]}")
+    # 거래대금이 별도 경로에 있을 수도 있다.
+    for url in (
+        "https://m.stock.naver.com/api/index/KOSPI/summary",
+        "https://m.stock.naver.com/api/index/KOSPI/integration",
+        "https://m.stock.naver.com/api/index/KOSPI/marketValue",
+        "https://api.stock.naver.com/index/KOSPI/integration",
+    ):
         show(url)
-
     return 0
-
-
-def _unused():
-    print("=" * 70)
-    print("2) 새 테마 페이지 안에서 단서 찾기")
-    print("=" * 70)
-    page = None
-    for url in ("https://finance.naver.com/sise/theme.naver",
-                "https://stock.naver.com/sise/theme"):
-        try:
-            status, raw = get(url, timeout=25)
-        except Exception as e:  # noqa: BLE001
-            print(f"  {url} — {type(e).__name__}: {e}")
-            continue
-        body = raw.decode("euc-kr" if "finance." in url else "utf-8",
-                          errors="replace")
-        print(f"  {url} -> {status}, {len(body):,}자")
-        page = page or body
-
-        # 페이지가 참조하는 API 주소를 전부 긁는다. 새 프론트엔드가 무엇을
-        # 부르는지는 대개 번들이 아니라 초기 데이터에 그대로 적혀 있다.
-        apis = sorted(set(re.findall(r'https?://[\w.-]*naver\.com/[\w/.\-?=&%]*api[\w/.\-?=&%]*', body)))
-        apis += sorted(set(re.findall(r'"(/api/[\w/.\-?=&%]+)"', body)))
-        for a in apis[:25]:
-            print(f"     api: {a}")
-        if not apis:
-            print("     (api 로 보이는 주소 없음)")
-
-        # 테마 식별자가 어떤 모양으로 들어 있는지
-        for pat, label in (
-            (r'themeCode["\':\s]+([A-Za-z0-9]+)', "themeCode"),
-            (r'theme[Ii]d["\':\s]+([A-Za-z0-9]+)', "themeId"),
-            (r'no=(\d+)[^>]*>([^<]{2,20})</a>', "옛 링크"),
-            (r'"themeName"\s*:\s*"([^"]+)"', "themeName"),
-        ):
-            found = re.findall(pat, body)[:5]
-            if found:
-                print(f"     {label}: {found}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
