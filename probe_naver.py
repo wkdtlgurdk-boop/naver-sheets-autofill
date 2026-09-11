@@ -66,14 +66,9 @@ def status_mark(code):
 
 
 def main():
-    """페이지를 줄인 게 테마 수를 깎았는지 직접 센다.
-
-    상위 100개(현재 설정) 밖에, 조건을 통과할 만한 테마가 남아 있는지 본다.
-    theme_scan 과 같은 문턱을 그대로 쓴다.
-    """
+    """MLCC 테마가 왜 조건충족에서 빠졌는지 종목 단위로 본다."""
     import json as _json
-    MIN_CAP, MIN_RATE, SURGE_CAP, SURGE_RATE, MIN_COUNT = 2000, 5.0, 500, 20.0, 3
-    MIN_PART = 0.2
+    MIN_CAP, MIN_RATE, SURGE_CAP, SURGE_RATE = 2000, 5.0, 500, 20.0
 
     def n(v):
         if v in (None, "", "N/A", "-"):
@@ -83,45 +78,34 @@ def main():
         except ValueError:
             return None
 
-    def qualifies(rate, cap):
+    def why(rate, cap):
         if rate >= SURGE_RATE and cap >= SURGE_CAP:
-            return True
-        return rate >= MIN_RATE and cap >= MIN_CAP
+            return "통과(급등)"
+        if rate >= MIN_RATE and cap >= MIN_CAP:
+            return "통과(일반)"
+        if rate < MIN_RATE:
+            return f"탈락: 상승률 {rate:.2f}% < {MIN_RATE:g}%"
+        return f"탈락: 시총 {cap:,.0f}억 < {MIN_CAP:,}억"
 
-    all_groups, seen = [], set()
-    for page in range(1, 4):
-        url = f"https://m.stock.naver.com/api/stocks/theme?page={page}&pageSize=100"
-        _, raw = get(url)
-        gs = [g for g in _json.loads(raw.decode())["groups"] if g["no"] not in seen]
-        if not gs:
-            break
-        for g in gs:
-            seen.add(g["no"])
-        all_groups += gs
-        rates = [n(g["changeRate"]) for g in gs]
-        print(f"{page}페이지: {len(gs)}개, 등락률 {max(rates):+.2f}% ~ {min(rates):+.2f}%")
-
-    print(f"\n전체 {len(all_groups)}개")
-    passed = [g for g in all_groups
-              if g["totalCount"] and g["riseCount"] / g["totalCount"] >= MIN_PART]
-    in100 = [g for g in passed if all_groups.index(g) < 100]
-    print(f"참여율 {MIN_PART:.0%} 통과: {len(passed)}개 (상위100 안 {len(in100)}, 밖 {len(passed)-len(in100)})")
-
-    print("\n=== 참여율 통과 테마의 상세를 받아 조건충족 종목을 센다")
-    hits = []
-    for i, g in enumerate(passed):
-        _, raw = get(f"https://m.stock.naver.com/api/stocks/theme/{g['no']}?page=1&pageSize=100")
+    # 405 = MLCC, 566 = 딥페이크, 55 = 보안주(정보), 426 = 양자암호
+    for no, label in ((405, "MLCC(적층세라믹콘덴서)"), (566, "딥페이크"),
+                      (55, "보안주(정보)")):
+        _, raw = get(f"https://m.stock.naver.com/api/stocks/theme/{no}?page=1&pageSize=100")
         stocks = _json.loads(raw.decode()).get("stocks") or []
-        q = [s for s in stocks
-             if None not in (n(s.get("fluctuationsRatio")), n(s.get("marketValue")))
-             and qualifies(n(s["fluctuationsRatio"]), n(s["marketValue"]))]
-        if len(q) >= MIN_COUNT:
-            rank = all_groups.index(g) + 1
-            hits.append((rank, g["name"], g["changeRate"], len(q)))
-    print(f"\n조건충족({MIN_COUNT}종목 이상) 테마 {len(hits)}개:")
-    for rank, name, rate, cnt in hits:
-        mark = "  " if rank <= 100 else "★ 100위 밖!"
-        print(f"  {rank:>3}위 {name} ({rate}%) — {cnt}종목 {mark}")
+        print(f"\n=== {label} — 구성 {len(stocks)}종목")
+        rows = []
+        for st in stocks:
+            rate, cap = n(st.get("fluctuationsRatio")), n(st.get("marketValue"))
+            if None in (rate, cap):
+                continue
+            rows.append((rate, cap, st.get("stockName"), why(rate, cap)))
+        rows.sort(key=lambda r: -r[0])
+        ok = 0
+        for rate, cap, name, verdict in rows:
+            mark = "O" if verdict.startswith("통과") else " "
+            ok += verdict.startswith("통과")
+            print(f"  {mark} {name:14} {rate:+7.2f}%  시총 {cap:>9,.0f}억   {verdict}")
+        print(f"  -> 조건충족 {ok}종목 (3종목 이상이어야 테마로 잡힘)")
     return 0
 
 
