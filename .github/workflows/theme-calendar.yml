@@ -23,6 +23,14 @@ on:
         description: "시트에 쓰지 않고 카드/게시만 (오늘 블록이 이미 찬 날 시험용)"
         type: boolean
         default: false
+      as_of:
+        description: "지난 날짜를 다시 채울 때 (YYYY-MM-DD). 비우면 오늘"
+        type: string
+        default: ""
+      clear_first:
+        description: "그 날 블록을 비우고 다시 쓴다 (as_of 와 함께만)"
+        type: boolean
+        default: false
       skip_threads:
         description: "카드만 만들고 스레드에는 올리지 않음 (내용 확인용)"
         type: boolean
@@ -111,6 +119,10 @@ jobs:
         if: ${{ inputs.skip_sheet != true }}
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          # 지난 날짜를 다시 채울 때만 쓴다. clear_first 는 as_of 없이는
+          # theme_write 가 거부하므로, 오늘 블록이 실수로 지워지지 않는다.
+          THEME_AS_OF: ${{ inputs.as_of }}
+          THEME_CLEAR_FIRST: ${{ inputs.clear_first && '1' || '' }}
         run: python theme_write.py
 
       # Cards for Threads. Rendered from final_groups.json, so they say the

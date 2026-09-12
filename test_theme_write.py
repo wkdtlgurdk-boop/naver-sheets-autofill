@@ -283,6 +283,63 @@ MARKET = {
 }
 
 
+def test_clear_first_wipes_slots_but_not_the_formula_row():
+    """다시 채우기는 쓰는 범위만 지운다 — 대표행 수식은 살려둔다.
+
+    한 번 지우면 사람이 다시 넣어야 하는 것이 그 두 칸이다. 지우는 범위를
+    쓰는 범위와 정확히 같게 두면 실수로 넘어갈 일이 없다.
+    """
+    book = make_daily()
+    book.put("B158", "옛키워드")
+    book.put("B159", "옛종목")
+    tw.write_daily(book, FAKE_GID, GROUPS, FRIDAY, clear_first=True)
+
+    cleared = [w for w in book.writes if w[1] and w[1][0] == [""]]
+    check("첫 슬롯 키워드열을 비움", cleared[0][0], "B158:B163")
+    check("상승률열은 종목 줄만", cleared[1][0], "C159:C163")
+    check("거래대금열도 종목 줄만", cleared[2][0], "D159:D163")
+    for rng, _ in book.writes:
+        if rng in ("C158:C158", "D158:D158", "C158", "D158"):
+            failures.append(f"대표행 수식 칸을 건드렸다: {rng}")
+
+
+def test_clear_first_lets_the_day_be_rewritten_from_scratch():
+    """비운 뒤에는 옛 키워드가 자리를 잡고 있지 않으므로 앞에서부터 채운다."""
+    book = make_daily()
+    book.put("B158", "옛키워드")          # 첫 슬롯이 이미 차 있다
+    tw.write_daily(book, FAKE_GID, GROUPS, FRIDAY, clear_first=True)
+    written = [w for w in book.writes if w[1] and w[1][0] != [""]]
+    check("첫 슬롯부터 새 그룹", written[0][1][0], ["2차전지"])
+    check("첫 슬롯 범위", written[0][0], "B158:B163")
+
+
+def test_as_of_reads_the_env_and_falls_back_to_today():
+    import os
+    old = os.environ.get("THEME_AS_OF")
+    try:
+        os.environ["THEME_AS_OF"] = "2026-09-11"
+        day, overridden = tw.as_of()
+        check("지정한 날짜", (day.year, day.month, day.day), (2026, 9, 11))
+        check("덮어쓴 것으로 표시", overridden, True)
+
+        os.environ["THEME_AS_OF"] = ""
+        _, overridden = tw.as_of()
+        check("없으면 오늘", overridden, False)
+
+        os.environ["THEME_AS_OF"] = "9/11"
+        try:
+            tw.as_of()
+        except SystemExit as exc:
+            check("형식이 틀리면 멈춤", "YYYY-MM-DD" in str(exc), True)
+        else:
+            failures.append("as_of 가 이상한 형식을 그냥 받았다")
+    finally:
+        if old is None:
+            os.environ.pop("THEME_AS_OF", None)
+        else:
+            os.environ["THEME_AS_OF"] = old
+
+
 def make_monthly(month=8, day=28, day_col="N", head=5,
                  day_row=10, next_day_row=20):
     """연 단위 Monthly 탭의 한 조각.

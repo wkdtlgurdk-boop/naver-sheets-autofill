@@ -12,6 +12,7 @@ A열과 헤더행을 그대로 읽어서 찾으므로 탐색이 결정적이다.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -155,8 +156,51 @@ def ensure_daily_date(book: Spreadsheet, gid: int, now: datetime) -> int:
     return target
 
 
+def as_of() -> tuple[datetime, bool]:
+    """오늘 대신 다른 날짜를 대상으로 삼을 수 있게 한다.
+
+    지난 날짜를 다시 채워야 할 때가 있다. 2026-09-11 이 그랬다 — 네이버 개편으로
+    스캔이 죽어 반쪽만 기록됐고, 고친 뒤 토요일에 되돌리려니 오늘 날짜로는
+    그 블록을 찾을 수 없었다.
+
+    THEME_AS_OF 가 있으면 그 날을 '오늘'로 본다. 명시적으로 지목한 것이므로
+    주말 가드도 함께 건너뛴다 — 장이 닫힌 날 지난 날짜를 손보는 것이 바로
+    이 기능의 용도다.
+    """
+    raw = os.environ.get("THEME_AS_OF", "").strip()
+    if not raw:
+        return datetime.now(KST), False
+    try:
+        day = datetime.strptime(raw, "%Y-%m-%d")
+    except ValueError:
+        raise SystemExit(f"[중단] THEME_AS_OF 는 YYYY-MM-DD 형식이어야 합니다: {raw!r}")
+    return day.replace(tzinfo=KST), True
+
+
+def clear_daily_slots(book: Spreadsheet, gid: int, header_row: int,
+                      slots: list[int]) -> None:
+    """그 날 블록의 키워드·종목 칸을 비운다. 대표행 수식은 건드리지 않는다.
+
+    이미 채워진 슬롯은 평소에 절대 덮어쓰지 않는다(남의 데이터일 수 있다).
+    다시 채우려면 그 방어를 명시적으로 풀어야 하므로, 지우는 범위를 쓰는
+    범위와 정확히 같게 둔다: 키워드 칸과 종목 다섯 줄, 그리고 상승률·거래대금
+    열의 종목 줄만. 대표행(header_row+1)의 둘째·셋째 칸에는 AVERAGEA/SUM 이
+    들어 있고 그건 한 번 지우면 사람이 다시 넣어야 한다.
+    """
+    for slot in slots:
+        c1, c2, c3 = (col_letter(slot), col_letter(slot + 1), col_letter(slot + 2))
+        blank = [[""] for _ in range(STOCK_ROWS + 1)]
+        book.write(gid, f"{c1}{header_row + 1}:{c1}{header_row + 1 + STOCK_ROWS}", blank)
+        book.write(gid, f"{c2}{header_row + 2}:{c2}{header_row + 1 + STOCK_ROWS}",
+                   blank[:STOCK_ROWS])
+        book.write(gid, f"{c3}{header_row + 2}:{c3}{header_row + 1 + STOCK_ROWS}",
+                   blank[:STOCK_ROWS])
+    print(f"  Daily: 슬롯 {len(slots)}개를 비웠습니다 "
+          f"(대표행 수식은 그대로)")
+
+
 def write_daily(book: Spreadsheet, gid: int, groups: list[dict],
-                now: datetime) -> list[dict]:
+                now: datetime, clear_first: bool = False) -> list[dict]:
     """Daily Keyword Calendar 에 오늘 블록을 채우고, 대표행 계산값을 돌려준다."""
     wanted = f"{now.month}/{now.day}"
     header_row = ensure_daily_date(book, gid, now)
@@ -178,6 +222,9 @@ def write_daily(book: Spreadsheet, gid: int, groups: list[dict],
     # 20:10 로컬 작업(과 이 스크립트)은 슬롯을 하나씩 쓰므로 도중에 죽으면
     # 하루가 반만 찬 채로 남는다. 첫 칸만 보고 "이미 기록됨"으로 건너뛰면
     # 나머지 슬롯이 영영 비어 있게 된다.
+    if clear_first:
+        clear_daily_slots(book, gid, header_row, slots)
+
     kw_row = book.read_formatted(gid, f"A{header_row + 1}:Z{header_row + 1}")
     kw_row = kw_row[0] if kw_row else []
 
@@ -381,9 +428,16 @@ def write_monthly(book: Spreadsheet, gid: int, totals: list[dict], market: dict,
 
 
 def main() -> int:
-    now = datetime.now(KST)
-    if now.weekday() > 4:
+    now, overridden = as_of()
+    if overridden:
+        print(f"[주의] THEME_AS_OF={now:%Y-%m-%d} — 오늘이 아니라 이 날짜의 "
+              f"블록에 씁니다.")
+    elif now.weekday() > 4:
         raise SystemExit(f"[중단] 주말({now:%A})이라 실행하지 않음.")
+    clear_first = os.environ.get("THEME_CLEAR_FIRST") == "1"
+    if clear_first and not overridden:
+        raise SystemExit("[중단] THEME_CLEAR_FIRST 는 THEME_AS_OF 와 함께만 씁니다. "
+                         "오늘 블록을 실수로 지우는 일을 막기 위한 것입니다.")
 
     here = Path(__file__).parent
     groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
@@ -395,7 +449,7 @@ def main() -> int:
     daily = Spreadsheet(DAILY_ID)
     daily_gid = resolve_daily_gid(daily, now)
     print(f"  Daily 탭: '{daily.title_for_gid(daily_gid)}' (gid {daily_gid})")
-    totals = write_daily(daily, daily_gid, groups, now)
+    totals = write_daily(daily, daily_gid, groups, now, clear_first)
 
     monthly = Spreadsheet(MONTHLY_ID)
     monthly_gid = resolve_monthly_gid(monthly, now)
