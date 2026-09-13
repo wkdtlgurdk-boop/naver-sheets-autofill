@@ -186,9 +186,12 @@ def summary_card(now: datetime, groups: list[dict], market: dict) -> Card:
         c.d.text((x, 480), f"{round(m['index']):,}", font=font("black", SZ["idx_value"]),
                  fill=INK, anchor="ls")
         f = font("medium", SZ["idx_sub"])
-        head = f"거래대금 {m['amount_trillion']}조 · 외인 "
+        # 장 시작 전이나 지난 날짜 재작성에서는 거래대금이 안 온다. 그때
+        # "None조" 를 찍느니 값이 없다고 말하는 편이 낫다 -- 카드는 공개된다.
+        amt = m.get("amount_trillion")
+        head = f"거래대금 {amt}조 · 외인 " if amt is not None else "거래대금 — · 외인 "
         c.d.text((x, 518), head, font=f, fill=MUTED, anchor="ls")
-        won = m["foreign_eok"]
+        won = m.get("foreign_eok") or 0
         c.d.text((x + c.d.textlength(head, font=f), 518), f"{won:+,}억",
                  font=font("bold", SZ["idx_sub"]), fill=RED if won >= 0 else (90, 150, 255),
                  anchor="ls")

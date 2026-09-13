@@ -106,12 +106,19 @@ class Groups(unittest.TestCase):
         gs = groups_from_grid(g, "9/11")
         self.assertNotIn("다음블록종목", [s["name"] for s in gs[0]["top5"]])
 
-    def test_거래대금은_억에서_백만원으로_바뀐다(self):
-        # cards.eok 가 100 으로 나눠 억을 만든다. 여기서 100 을 곱해야 맞는다.
+    def test_거래대금은_변환하지_않는다(self):
+        """시트 칸과 final_groups 의 단위는 이미 같다 (둘 다 백만원).
+
+        theme_write.write_daily 가 int(s["amount"]) 를 그대로 시트에 쓴다.
+        시트를 억으로 보고 100 을 곱했더니 9/11 카드에 596,940억(=59.7조)이
+        찍혀 공개 리포에 올라갔다. 같은 날 스캔 경로로 만든 카드는 5,969억
+        이었다 -- 정확히 100 배였고, 이 시험이 그 틀린 가정을 못 박고 있었다.
+        """
         gs = groups_from_grid(sample(), "9/11")
-        self.assertEqual(gs[0]["top5"][0]["amount"], 244 * 100)
-        self.assertEqual(sum(s["amount"] for s in gs[0]["top5"]) // 100,
-                         244 + 150 + 886 + 86 + 1112)
+        self.assertEqual(gs[0]["top5"][0]["amount"], 244)
+        # cards.eok 가 100 으로 나눠 억을 만든다. 244 백만원 = 2억.
+        import cards
+        self.assertEqual(cards.eok(gs[0]["top5"][0]["amount"]), round(244 / 100))
 
     def test_빈_슬롯과_오류셀은_건너뛴다(self):
         g = sample()
