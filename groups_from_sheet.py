@@ -21,9 +21,10 @@ React 껍데기). 그래서 스캔이 0개로 멈추고, 그 뒤 카드도 스�
     header_row + 1  슬롯 첫 열에 키워드 (나머지 두 칸은 AVERAGEA/SUM 수식)
     header_row + 2~ 종목명 / 상승률 / 거래대금(억), 최대 5행
 
-거래대금 단위에 주의. 시트는 **억**으로 보여주고 final_groups.json 은 **백만원**
-으로 담는다(cards.eok 가 100 으로 나눠 억을 만든다). 그래서 여기서 100 을 곱한다.
-틀리면 카드에 100배 틀린 금액이 공개로 올라간다.
+거래대금 단위에 주의. **변환하지 않는다.** theme_write.write_daily 가
+s["amount"] 를 그대로 시트에 쓰므로 시트 칸도 final_groups.json 도 똑같이
+백만원이다(cards.eok 가 100 으로 나눠 억을 만든다). 시트를 억으로 보고 100 을
+곱했더니 9/11 카드에 596,940억(=59.7조)이 찍혀 공개 리포에 올라갔다.
 """
 from __future__ import annotations
 
@@ -131,12 +132,15 @@ def groups_from_grid(grid: list[list], wanted: str) -> list[dict]:
             if not name:
                 break      # 빈 줄이 블록의 끝이다
             rate = parse_rate(_cell(grid, row, slot + 1))
-            amount_eok = parse_amount_eok(_cell(grid, row, slot + 2))
-            if rate is None or amount_eok is None:
+            amount = parse_amount_eok(_cell(grid, row, slot + 2))
+            if rate is None or amount is None:
                 continue
-            # 시트는 억, final_groups 는 백만원 (cards.eok 가 100 으로 나눈다)
+            # 단위 변환을 하지 않는다. theme_write.py 가 s["amount"] 를 그대로
+            # 시트에 쓰므로(백만원), 시트 칸과 final_groups 의 단위가 이미 같다.
+            # 억으로 보고 100 을 곱했더니 9/11 카드에 596,940억(=59.7조)이
+            # 찍혔다 -- 실제는 5,969억이다.
             stocks.append({"name": name, "code": "", "rate": rate,
-                           "amount": amount_eok * 100})
+                           "amount": amount})
 
         if not stocks:
             continue
