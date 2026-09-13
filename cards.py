@@ -25,6 +25,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import theme_scan as ts
+from theme_write import as_of
 
 KST = timezone(timedelta(hours=9))
 W, H = 1080, 1350
@@ -255,7 +256,14 @@ def main() -> int:
     if not market:
         raise SystemExit("[중단] 지수 요약이 비어 있습니다 — market_summary.py 가 "
                          "실패했는지 보세요. 요약 카드에 지수를 넣을 수 없습니다.")
-    made = build(out_dir, groups, market, datetime.now(KST))
+    # 카드에 찍히는 날짜도, 카드가 들어가는 폴더 이름도 '오늘'이 아니라
+    # 이 글이 다루는 거래일이어야 한다. 지난 날짜를 다시 채우는 실행에서
+    # now 를 쓰면 9/11 자료가 9/13 이라는 제목을 달고 나간다 -- 실제로 그렇게
+    # 나갔다. theme_write.as_of 가 그 날짜의 단일 출처다.
+    now, overridden = as_of()
+    if overridden:
+        print(f"[주의] THEME_AS_OF={now:%Y-%m-%d} — 이 날짜로 카드를 만듭니다.")
+    made = build(out_dir, groups, market, now)
     for p in made:
         print(f"  {p}")
     print(f"카드 {len(made)}장")
