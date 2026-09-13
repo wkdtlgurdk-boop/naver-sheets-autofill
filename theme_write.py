@@ -19,6 +19,8 @@ from pathlib import Path
 
 from sheets import Spreadsheet
 
+from as_of import as_of as _as_of
+
 KST = timezone(timedelta(hours=9))
 
 DAILY_ID = "1xq_WNQh04xV1UsLm9ZRL6HhkQIJn-34G41zm87oR2h4"
@@ -157,24 +159,11 @@ def ensure_daily_date(book: Spreadsheet, gid: int, now: datetime) -> int:
 
 
 def as_of() -> tuple[datetime, bool]:
-    """오늘 대신 다른 날짜를 대상으로 삼을 수 있게 한다.
+    """as_of.py 로 옮겼다. 카드·스레드·시트가 같은 날짜를 봐야 한다.
 
-    지난 날짜를 다시 채워야 할 때가 있다. 2026-09-11 이 그랬다 — 네이버 개편으로
-    스캔이 죽어 반쪽만 기록됐고, 고친 뒤 토요일에 되돌리려니 오늘 날짜로는
-    그 블록을 찾을 수 없었다.
-
-    THEME_AS_OF 가 있으면 그 날을 '오늘'로 본다. 명시적으로 지목한 것이므로
-    주말 가드도 함께 건너뛴다 — 장이 닫힌 날 지난 날짜를 손보는 것이 바로
-    이 기능의 용도다.
+    부르는 자리를 그대로 두려고 이름만 남긴다.
     """
-    raw = os.environ.get("THEME_AS_OF", "").strip()
-    if not raw:
-        return datetime.now(KST), False
-    try:
-        day = datetime.strptime(raw, "%Y-%m-%d")
-    except ValueError:
-        raise SystemExit(f"[중단] THEME_AS_OF 는 YYYY-MM-DD 형식이어야 합니다: {raw!r}")
-    return day.replace(tzinfo=KST), True
+    return _as_of()
 
 
 def clear_daily_slots(book: Spreadsheet, gid: int, header_row: int,

@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cards
-from theme_write import as_of
+from as_of import as_of
 
 KST = timezone(timedelta(hours=9))
 API = "https://graph.threads.net/v1.0"
@@ -136,6 +136,12 @@ def main() -> int:
     # 본문 날짜와 카드 폴더는 '오늘'이 아니라 이 글이 다루는 거래일을 따른다.
     # cards.py 가 같은 출처로 폴더를 만들었으므로 둘이 어긋나지 않는다.
     now, overridden = as_of()
+    if overridden and os.environ.get("THREADS_ALLOW_BACKFILL") != "1":
+        # 그 날짜 글은 이미 그날 올라갔다. 다시 올리면 같은 날 글이 둘이 된다.
+        # 지난 날짜 실행은 시트와 카드를 고치러 도는 것이므로 게시는 막는다.
+        print(f"THEME_AS_OF={now:%Y-%m-%d} — 지난 날짜 실행이라 게시하지 않습니다. "
+              "올리려면 THREADS_ALLOW_BACKFILL=1 을 주세요.")
+        return 0
     if overridden:
         print(f"[threads] THEME_AS_OF={now:%Y-%m-%d} 기준으로 올립니다.", file=sys.stderr)
     day = f"{now:%Y%m%d}"

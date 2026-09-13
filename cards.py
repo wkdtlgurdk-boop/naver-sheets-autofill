@@ -25,7 +25,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import theme_scan as ts
-from theme_write import as_of
+from as_of import as_of
 
 KST = timezone(timedelta(hours=9))
 W, H = 1080, 1350

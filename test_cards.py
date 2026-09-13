@@ -174,6 +174,68 @@ def test_long_theme_list_is_truncated_not_overflowed():
     check("짧으면 그대로", cards.fit(d, "짧다", f, 800), "짧다")
 
 
+def _as_of(value):
+    """THEME_AS_OF 를 넣고 as_of 모듈을 다시 읽는다."""
+    import importlib
+    import os
+
+    import as_of as mod
+    old = os.environ.get("THEME_AS_OF")
+    if value is None:
+        os.environ.pop("THEME_AS_OF", None)
+    else:
+        os.environ["THEME_AS_OF"] = value
+    try:
+        importlib.reload(mod)
+        return mod.as_of()
+    finally:
+        if old is None:
+            os.environ.pop("THEME_AS_OF", None)
+        else:
+            os.environ["THEME_AS_OF"] = old
+        importlib.reload(mod)
+
+
+def test_as_of_reads_the_target_day_and_says_it_was_named():
+    day, overridden = _as_of("2026-09-11")
+    check("지목한 날짜", day.strftime("%Y-%m-%d"), "2026-09-11")
+    check("사람이 지목했다", overridden, True)
+    day, overridden = _as_of(None)
+    check("안 주면 오늘", overridden, False)
+
+
+def test_a_bad_as_of_stops_instead_of_falling_back_to_today():
+    # 형식이 틀렸는데 오늘로 돌아가면, 9/11 을 채우려던 실행이 조용히 오늘을
+    # 덮어쓴다. 그건 고치려던 것보다 나쁘다.
+    try:
+        _as_of("9/11")
+    except SystemExit:
+        return
+    failures.append("틀린 THEME_AS_OF 를 그냥 통과시켰다")
+
+
+def test_every_dated_step_asks_the_same_place():
+    """cards / post_threads / theme_write 가 각자 날짜를 계산하지 않는다.
+
+    9/13 사고가 정확히 이것이었다 — theme_write 만 THEME_AS_OF 를 보고
+    cards 와 post_threads 는 datetime.now() 를 봐서, 9/11 을 다시 채우는
+    실행이 카드를 9/13(일) 로 찍어 스레드에 올렸다.
+    """
+    for name in ("cards.py", "post_threads.py", "theme_write.py"):
+        src = Path(__file__).with_name(name).read_text(encoding="utf-8")
+        if "from as_of import" not in src:
+            failures.append(f"{name} 이 공용 as_of 를 쓰지 않는다")
+        # 날짜를 직접 만드는 곳이 남아 있으면 갈라진다. as_of.py 안에서만 허용.
+        if "datetime.now(KST)" in src:
+            failures.append(f"{name} 에 datetime.now(KST) 가 남아 있다")
+
+
+def test_a_backfill_run_does_not_post_to_threads_by_default():
+    src = Path(__file__).with_name("post_threads.py").read_text(encoding="utf-8")
+    if "THREADS_ALLOW_BACKFILL" not in src:
+        failures.append("지난 날짜 실행에서 게시를 막는 장치가 없다")
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
