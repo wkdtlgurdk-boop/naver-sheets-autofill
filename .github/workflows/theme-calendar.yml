@@ -143,11 +143,17 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          THEME_AS_OF: ${{ inputs.as_of }}
         run: |
-          if [ -s final_groups.json ]; then
-            echo "스캔 결과가 있어 시트를 읽지 않습니다."
+          # 파일이 있는지가 아니라 그룹이 있는지를 본다. 스캔이 0개로
+          # 끝나도 final_groups.json 은 "[]" 라는 2바이트 파일로 남으므로
+          # -s 로 보면 '결과가 있다'가 되어 정작 필요한 순간에 복원이 안
+          # 걸린다. 9/14 실행이 그랬다 -- 0개를 받고도 시트를 읽지 않았다.
+          n=$(python -c 'import json;print(len(json.load(open("final_groups.json",encoding="utf-8"))))' 2>/dev/null || echo 0)
+          if [ "$n" -gt 0 ]; then
+            echo "스캔이 $n 개를 찾았습니다 — 시트를 읽지 않습니다."
           else
-            echo "final_groups.json 이 없습니다 — Daily 시트에서 오늘 블록을 읽습니다."
+            echo "스캔이 0개입니다 — Daily 시트에서 해당 날짜 블록을 읽습니다."
             python groups_from_sheet.py
           fi
 

@@ -33,6 +33,8 @@ import re
 import sys
 from datetime import datetime, timedelta, timezone
 
+from as_of import as_of
+
 KST = timezone(timedelta(hours=9))
 DAILY_ID = "1xq_WNQh04xV1UsLm9ZRL6HhkQIJn-34G41zm87oR2h4"
 SEARCH_ROWS = 700
@@ -160,8 +162,12 @@ def main() -> int:
     from sheets import Spreadsheet
     from theme_write import resolve_daily_gid
 
-    now = datetime.now(KST)
+    # 지난 날짜를 다시 만드는 실행이면 그 날 블록을 읽어야 한다. 오늘을 읽으면
+    # 9/11 을 되살리려던 실행이 아직 비어 있는 오늘 블록을 보고 멈춘다.
+    now, overridden = as_of()
     wanted = args.date or f"{now.month}/{now.day}"
+    if overridden and not args.date:
+        print(f"THEME_AS_OF={now:%Y-%m-%d} — {wanted} 블록을 읽습니다")
     book = Spreadsheet(DAILY_ID)
     gid = resolve_daily_gid(book, now)
     grid = book.read_formatted(gid, f"A1:AN{SEARCH_ROWS}")
