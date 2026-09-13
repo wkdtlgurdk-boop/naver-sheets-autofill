@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import pathlib
 import unittest
 
 from groups_from_sheet import (block_date, find_header_row, groups_from_grid,
@@ -127,6 +128,49 @@ class Groups(unittest.TestCase):
             self.assertIn(key, g)
         for key in ("name", "rate", "amount"):
             self.assertIn(key, g["top5"][0])
+
+
+class AsOfDrivesWhichBlock(unittest.TestCase):
+    """지난 날짜 재실행은 그 날 블록을 읽어야 한다.
+
+    9/14 실행이 여기서 막혔다. 스캔이 0개를 받아 시트를 읽어야 했는데, 읽더라도
+    오늘(9/14) 블록을 찾았을 것이다 -- 아직 비어 있는 칸이다. 되살리려는 날짜와
+    읽는 날짜가 같아야 한다.
+    """
+
+    def wanted(self, as_of_value, date_arg=None):
+        import importlib
+        import os
+
+        import as_of as mod
+        old = os.environ.get("THEME_AS_OF")
+        if as_of_value is None:
+            os.environ.pop("THEME_AS_OF", None)
+        else:
+            os.environ["THEME_AS_OF"] = as_of_value
+        try:
+            importlib.reload(mod)
+            now, overridden = mod.as_of()
+            return date_arg or f"{now.month}/{now.day}", overridden
+        finally:
+            if old is None:
+                os.environ.pop("THEME_AS_OF", None)
+            else:
+                os.environ["THEME_AS_OF"] = old
+            importlib.reload(mod)
+
+    def test_as_of_picks_that_days_block(self):
+        self.assertEqual(self.wanted("2026-09-11"), ("9/11", True))
+
+    def test_explicit_date_still_wins(self):
+        wanted, _ = self.wanted("2026-09-11", date_arg="9/8")
+        self.assertEqual(wanted, "9/8")
+
+    def test_the_script_reads_the_shared_as_of(self):
+        src = pathlib.Path(__file__).with_name("groups_from_sheet.py").read_text(
+            encoding="utf-8")
+        self.assertIn("from as_of import as_of", src)
+        self.assertNotIn("datetime.now(KST)", src)
 
 
 if __name__ == "__main__":
