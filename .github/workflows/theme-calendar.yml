@@ -72,6 +72,7 @@ jobs:
           python test_llm_group.py
           python test_theme_write.py
           python test_groups_from_sheet.py
+          python test_feed_export.py
 
       # Scan finance.naver.com's theme pages and merge overlapping themes.
       # The list is ordered by today's move, so only its first SCAN_PAGES pages
@@ -94,6 +95,14 @@ jobs:
       # Re-derive the groups under the new keywords, reusing the scan on disk.
       - name: Regroup
         run: python theme_scan.py --regroup
+
+      # 시트에는 종목코드가 없다. 아침 매수 후보 봇은 일봉을 받아야 하므로
+      # 코드가 있어야 하고, 코드를 아는 것은 스캔뿐이다 -- 오늘 본 이름->코드를
+      # codes.json 에 쌓아 두면 스캔이 0개인 날(시트에서 복원한 날)에도 어제까지
+      # 쌓인 지도로 코드가 붙는다. 지우지 않고 덧붙이기만 한다.
+      - name: Remember today's stock codes
+        if: always()
+        run: python feed_export.py codes
 
       # 임시 파일에 받아서 성공했을 때만 옮긴다. 바로 리다이렉트하면 스크립트가
       # 죽어도 0바이트 파일이 남아, 뒤 단계가 "파일은 있는데 JSON 이 아니다" 라는
@@ -190,6 +199,9 @@ jobs:
           # 이름을 고칠 수 없고 값을 다시 붙여넣는 것도 번거로우므로, 맞는
           # 이름이 있으면 그것을, 없으면 처음 쓰던 이름을 쓴다.
           CARD_REPO_TOKEN: ${{ secrets.CARD_REPO_TOKEN || secrets.CARDREPOTOKEN }}
+          # 피드는 시트를 되읽어 만든다 -- final_groups.json 이 아니라 시트가
+          # 기준이어야, 사람이 블록을 손으로 고친 것까지 봇에 그대로 간다.
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           THEME_AS_OF: ${{ inputs.as_of }}
         run: |
           if [ -z "$CARD_REPO_TOKEN" ]; then
@@ -203,17 +215,24 @@ jobs:
           day=$(TZ=Asia/Seoul date -d "${THEME_AS_OF:-today}" +%Y%m%d)
           git clone --depth 1 \
             "https://x-access-token:${CARD_REPO_TOKEN}@github.com/wkdtlgurdk-boop/theme_bot.git" /tmp/theme_bot
-          mkdir -p /tmp/theme_bot/cards
+          mkdir -p /tmp/theme_bot/cards /tmp/theme_bot/feed
           # 그 날 폴더를 통째로 갈아 끼운다. cp 만 하면 지난 실행이 남긴
           # 카드가 섞인다 -- 테마 이름이 파일명이라 그룹이 바뀌면 이름도
           # 바뀌고, 없어진 테마의 카드가 그대로 남는다.
           rm -rf "/tmp/theme_bot/cards/$day"
           cp -r "cards/$day" /tmp/theme_bot/cards/
+          # 카드와 같은 클론에 시트 피드도 얹는다. 아침 매수 후보 봇은 구글
+          # 인증이 없어 시트를 직접 못 읽으므로, 방금 쓴 시트 블록을 여기로
+          # 내보내 raw.githubusercontent.com 으로 받아 가게 한다. 실패해도
+          # 카드 게시는 막지 않는다 -- 피드가 하루 낡으면 봇이 스스로 신호를
+          # 끄고 그렇게 알린다.
+          python feed_export.py themes --feed-dir /tmp/theme_bot/feed \
+            || echo "[주의] 테마 피드를 내보내지 못했습니다 — 봇은 어제 피드를 낡았다고 보고 신호를 끕니다"
           cd /tmp/theme_bot
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A cards   # -A: 갈아 끼우며 지워진 카드도 반영
-          git diff --cached --quiet && echo "no new cards" && exit 0
+          git add -A cards feed   # -A: 갈아 끼우며 지워진 카드도 반영
+          git diff --cached --quiet && echo "no new cards or feed" && exit 0
           git commit -m "cards $day"
           git push origin HEAD:main
 
@@ -236,12 +255,12 @@ jobs:
       # passes validation, and it only ever appends to exclusions.json -- a line
       # a person wrote or deleted there stays that way. Runs after the write so
       # a failed write never lands a grouping that was never used.
-      - name: Commit keywords.json and exclusions.json
+      - name: Commit keywords.json, exclusions.json and codes.json
         if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add keywords.json exclusions.json
+          git add keywords.json exclusions.json codes.json
           git diff --cached --quiet && echo "no change" && exit 0
           git commit -m "Group today's themes ($(TZ=Asia/Seoul date +%Y-%m-%d))"
           git pull --rebase --autostash origin ${{ github.ref_name }}
