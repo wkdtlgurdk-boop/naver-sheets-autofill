@@ -18,6 +18,13 @@
 받는다. 그 하루는 사람이 HTS 에서 보고 적어 넣는다:
 
     python supply_demand.py --backfill backfill/20260914.txt --day 2026-09-14
+
+--export 는 방금 시트에 쓴 것을 종목코드까지 붙여 한 파일로 남긴다.
+feed_export.py 가 그것을 공개 저장소의 5일 창에 얹고, 아침 매수 후보
+봇(volume-surge-telegram-bot/tradesignal)이 거기서 수급 신호를 센다. 시트에는
+종목코드가 없어서, 코드를 아는 유일한 자리가 방금 받은 이 응답이다.
+
+    python supply_demand.py --export supply_today.json
 """
 from __future__ import annotations
 
@@ -104,6 +111,67 @@ def to_pairs(rows: list[dict]) -> list[list]:
     """종목명 / 금액(백만원) 20행."""
     return [[r["itemname"], round(int(r["accTradeAmount"]) / 1e6)]
             for r in rows[:ROWS]]
+
+
+def item_code(row: dict) -> str | None:
+    """API 마다 종목코드 키가 제각각이라 한 군데서 흡수한다."""
+    for key in ("itemcode", "itemCode", "code", "stockCode"):
+        value = row.get(key)
+        if value:
+            return str(value).zfill(6)
+    return None
+
+
+def merge_blocks(raw: dict) -> list[dict]:
+    """네 블록을 종목별로 합친다. 순매수액 내림차순, 단위는 시트와 같은 백만원.
+
+    외인과 기관이 같은 종목을 사면 두 번 세지 않고 더한다 -- 봇이 묻는 것은
+    '며칠 순매수 상위에 들었나'이지 '몇 블록에 들었나'가 아니다. 어느 블록에서
+    왔는지는 blocks 에 남겨 두어 나중에 되짚을 수 있게 한다.
+    """
+    acc: dict[str, dict] = {}
+    for (tab, market), rows in sorted(raw.items()):
+        for r in rows[:ROWS]:
+            code = item_code(r)
+            if not code:
+                continue
+            entry = acc.setdefault(code, {"code": code,
+                                          "name": r.get("itemname") or code,
+                                          "amount": 0, "blocks": []})
+            entry["amount"] += round(int(r["accTradeAmount"]) / 1e6)
+            entry["blocks"].append(f"{tab}/{market}")
+    return sorted(acc.values(), key=lambda e: -e["amount"])
+
+
+def consensus_window(windows: dict[str, list[str]]) -> list[str]:
+    """네 블록의 날짜 줄은 같아야 한다. 갈리면 다수를 쓰고 갈렸다고 알린다.
+
+    갈리는 것은 사람이 한 탭만 손으로 밀었거나 지난 실행이 중간에 죽은 경우다.
+    어느 쪽이든 조용히 한쪽을 고르면 안 되지만, 그렇다고 그날 수급 신호를 통째로
+    끄는 것도 과하다 -- 다수결로 가되 로그에 남긴다.
+    """
+    if not windows:
+        return []
+    counts: dict[tuple, int] = {}
+    for labels in windows.values():
+        counts[tuple(labels)] = counts.get(tuple(labels), 0) + 1
+    best, votes = max(counts.items(), key=lambda kv: kv[1])
+    if len(counts) > 1:
+        print(f"  [주의] 블록마다 날짜 줄이 다릅니다 ({len(counts)}종). "
+              f"{votes}/{len(windows)} 인 [{' '.join(x or '-' for x in best)}] 를 씁니다.",
+              file=sys.stderr)
+    return [x for x in best if x]
+
+
+def export_payload(raw: dict, windows: dict[str, list[str]], now: datetime) -> dict:
+    """방금 시트에 쓴 것을 봇이 읽을 한 덩이로. 시트에 없는 것은 종목코드뿐이다."""
+    return {
+        "date": now.strftime("%Y%m%d"),
+        "label": f"{now.month}/{now.day}",
+        "window_labels": consensus_window(windows),
+        "generated_at": now.isoformat(timespec="seconds"),
+        "stocks": merge_blocks(raw),
+    }
 
 
 def plan_slots(labels: list[str], today_label: str) -> tuple[int, bool]:
@@ -194,9 +262,12 @@ def parse_backfill(text: str) -> dict[tuple[str, str], list[list]]:
     return blocks
 
 
-def write_day(fresh: dict, day: datetime, label: str, dry_run: bool) -> int:
+def write_day(fresh: dict, day: datetime, label: str,
+              dry_run: bool) -> tuple[int, dict[str, list[str]]]:
+    """(종료코드, 블록별 날짜 줄). 날짜 줄은 --export 가 창을 맞추는 데 쓴다."""
     book = Spreadsheet(SPREADSHEET_ID)
     writes: list[tuple[int, str, list[list]]] = []
+    windows: dict[str, list[str]] = {}
 
     for tab, cfg in TABS.items():
         gid = cfg["gid"]
@@ -236,6 +307,7 @@ def write_day(fresh: dict, day: datetime, label: str, dry_run: bool) -> int:
                 date_cells[0] += [d if d != "" else "", ""]
             date_cells[0] = date_cells[0][:WIDTH]
 
+            windows[f"{tab}/{market}"] = list(labels)
             how = (f"한 칸 밀어냄({dropped} 버림)" if shift
                    else "이미 있던 칸 덮어씀" if label in labels[:idx] + labels[idx + 1:]
                    else "빈 칸에 추가")
@@ -248,13 +320,13 @@ def write_day(fresh: dict, day: datetime, label: str, dry_run: bool) -> int:
         for gid, rng, _ in writes:
             print(f"  (dry-run) gid={gid} {rng}")
         print("dry-run 종료 — 시트를 건드리지 않았습니다")
-        return 0
+        return 0, windows
 
     for gid, rng, values in writes:
         n = book.write(gid, rng, values)
         print(f"  기록 gid={gid} {rng} ({n}칸)")
     print("완료")
-    return 0
+    return 0, windows
 
 
 def main() -> int:
@@ -266,6 +338,8 @@ def main() -> int:
                          "(형식은 parse_backfill 참고). --day 와 함께 쓴다")
     ap.add_argument("--day", metavar="YYYY-MM-DD",
                     help="--backfill 이 채울 날짜")
+    ap.add_argument("--export", metavar="PATH",
+                    help="시트에 쓴 오늘치를 종목코드까지 붙여 이 파일로 내보낸다")
     a = ap.parse_args()
 
     if bool(a.backfill) != bool(a.day):
@@ -281,7 +355,13 @@ def main() -> int:
         for tab, market in BLOCK_ORDER:
             top = fresh[(tab, market)][0]
             print(f"  {tab}/{market}: 1위 {top[0]} {top[1]:,}백만")
-        return write_day(fresh, day, label, a.dry_run)
+        rc, _ = write_day(fresh, day, label, a.dry_run)
+        if a.export:
+            # 손으로 적은 파일에는 종목코드가 없다. 봇은 코드로 종목을 세므로
+            # 내보낼 것이 없다 -- 그 하루는 시트에만 남고 피드의 창에서는
+            # 빠진다(순매수 일수를 적게 셀 뿐, 없는 날을 지어내지는 않는다).
+            print("  [알림] 손으로 채운 날은 종목코드가 없어 피드로 내보내지 않습니다.")
+        return rc
 
     now = datetime.now(KST)
     if now.weekday() > 4:
@@ -294,7 +374,7 @@ def main() -> int:
 
     # 네 블록을 모두 받아 검증한 뒤에야 쓰기 시작한다. 하나라도 확정 전이면
     # 시트를 반만 채우는 것보다 아무것도 안 쓰는 편이 낫다.
-    fresh = {}
+    fresh, raw = {}, {}
     try:
         for tab, cfg in TABS.items():
             for market in MARKETS:
@@ -302,6 +382,7 @@ def main() -> int:
                 rows = fetch(cfg["investor"], market)
                 validate(rows, today_key, label)
                 fresh[(tab, market)] = to_pairs(rows)
+                raw[(tab, market)] = rows[:ROWS]
                 print(f"  {label}: 1위 {rows[0]['itemname']} "
                       f"{round(int(rows[0]['accTradeAmount']) / 1e6):,}백만")
     except NotSettled as exc:
@@ -318,7 +399,19 @@ def main() -> int:
             return 1
         return 0
 
-    return write_day(fresh, now, today_label, a.dry_run)
+    rc, windows = write_day(fresh, now, today_label, a.dry_run)
+    if rc == 0 and a.export:
+        if a.dry_run:
+            # 내보내기는 '시트에 이렇게 적혀 있다'는 말이다. 쓰지 않은 날에
+            # 그 말을 파일로 남기면, 봇은 있지도 않은 칸을 근거로 신호를 켠다.
+            print("  (dry-run) 내보내기도 건너뜁니다 — 시트를 안 썼으므로")
+        else:
+            payload = export_payload(raw, windows, now)
+            with open(a.export, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            print(f"  내보냄 {a.export} — {len(payload['stocks'])}종목, "
+                  f"창 [{' '.join(payload['window_labels'])}]")
+    return rc
 
 
 if __name__ == "__main__":

@@ -153,6 +153,11 @@ def groups_from_grid(grid: list[list], wanted: str) -> list[dict]:
             # 실제로 든 수여야 한다 -- 자른 뒤의 수를 넣으면 언제나 "5 중 5" 다.
             "total_qualifying": len(stocks),
             "top5": stocks[:CARD_ROWS],
+            # 블록에 실제로 들어 있던 전부. 카드는 top5 만 그리지만, 시트를
+            # 그대로 내보내는 feed_export.py 는 자르지 않은 쪽이 필요하다 --
+            # 사람이 여섯째 줄을 적어 넣은 블록에서 그 종목만 조용히 빠지면,
+            # 받는 쪽에서는 시트에 없었던 것과 구별되지 않는다.
+            "stocks": stocks,
         })
     return groups
 
