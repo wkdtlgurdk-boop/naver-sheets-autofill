@@ -194,6 +194,105 @@ def merge_supply_window(previous: dict | None, today: dict | None,
     return [days[label] for label in labels if label in days]
 
 
+def sheet_day(value) -> str:
+    """시트 날짜 칸을 YYYYMMDD 로. 못 읽으면 빈 문자열.
+
+    날짜 칸은 USER_ENTERED 로 쓰여서 원시값이 구글 시리얼 숫자로 온다
+    (1899-12-30 기준). 사람이 손으로 적은 칸은 문자열로 오므로 둘 다 받는다.
+
+    문자열은 날짜 서식을 **먼저** 본다. '20260915' 를 숫자로 먼저 읽으면
+    2천만 일이 지난 날짜가 되어 그대로 죽는다.
+    """
+    if value in ("", None):
+        return ""
+    if isinstance(value, str):
+        text = value.strip().replace("/", "-")
+        for fmt in ("%Y-%m-%d", "%Y%m%d"):
+            try:
+                return datetime.strptime(text, fmt).strftime("%Y%m%d")
+            except ValueError:
+                continue
+        value = text
+    try:
+        serial = int(float(value))
+    except (TypeError, ValueError):
+        return ""
+    try:
+        return (datetime(1899, 12, 30) + timedelta(days=serial)).strftime("%Y%m%d")
+    except (OverflowError, ValueError):
+        return ""
+
+
+def supply_days_from_sheet(labels: list[str], dates: list[str], blocks: list[list],
+                           code_map: dict[str, str]) -> tuple[list[dict], list[str]]:
+    """수급 시트의 날짜 칸들 -> 날짜별 종목 목록. (날들, 코드를 못 찾은 이름들).
+
+    시트에는 종목코드가 없다. 그래서 이름으로 지도를 뒤지는데, 못 찾은 이름은
+    그 날에서 빠진다. 빠지는 쪽이 안전하다 -- 순매수 일수를 적게 셀 뿐, 없는
+    종목을 있다고 세지는 않는다. 2026-09-15 실측으로 못 찾은 것은 전부
+    ETF(KODEX·TIGER) 였고 개별 종목은 전부 맞았다.
+
+    blocks 는 (외인/기관 x 코스피/코스닥) 네 덩이의 20행 x 10열 격자다. 슬롯
+    i 의 종목명은 i*2 열, 금액은 i*2+1 열에 있다.
+    """
+    out, missing = [], []
+    for i, label in enumerate(labels):
+        if not label:
+            continue
+        acc: dict[str, dict] = {}
+        for grid in blocks:
+            for row in grid:
+                name = str(row[i * 2]).strip() if i * 2 < len(row) else ""
+                raw = row[i * 2 + 1] if i * 2 + 1 < len(row) else ""
+                if not name:
+                    continue
+                try:
+                    amount = round(float(str(raw).replace(",", "")))
+                except (TypeError, ValueError):
+                    continue
+                code = code_map.get(name)
+                if not code:
+                    if name not in missing:
+                        missing.append(name)
+                    continue
+                entry = acc.setdefault(code, {"code": code, "name": name, "amount": 0})
+                entry["amount"] += amount
+        if acc:
+            out.append({
+                "date": dates[i] if i < len(dates) else "",
+                "label": label,
+                "source": "sheet-backfill",
+                "stocks": sorted(acc.values(), key=lambda e: -e["amount"]),
+            })
+    return out, missing
+
+
+def merge_backfill(previous: dict | None, sheet_days: list[dict],
+                   labels: list[str], generated_at: str) -> tuple[dict, list[str]]:
+    """이미 있는 날은 건드리지 않고 빈 날만 시트에서 메운다. (피드, 메운 날들).
+
+    순매수 API 가 준 날이 더 정확하다 -- 코드가 응답에 직접 들어 있어 이름으로
+    맞출 일이 없고 ETF 도 빠지지 않는다. 그래서 그런 날은 그대로 두고, 피드에
+    아예 없는 날만 시트에서 되살린다.
+    """
+    have = {d["label"] for d in (previous or {}).get("days") or []}
+    added = [d for d in sheet_days if d["label"] not in have]
+    days = merge_supply_window(previous, None, labels)
+    for day in added:
+        days.append(day)
+    order = {label: i for i, label in enumerate(labels)}
+    days.sort(key=lambda d: order.get(d["label"], len(order)))
+    newest = max((d.get("date") or "" for d in days), default="")
+    feed = {
+        "date": newest,
+        "window": labels,
+        "source": "supply-sheet",
+        "generated_at": generated_at,
+        "days": days,
+    }
+    return feed, [d["label"] for d in added]
+
+
 def supply_feed(previous: dict | None, today: dict, generated_at: str) -> dict:
     labels = list(today.get("window_labels") or [])
     if not labels:
@@ -304,6 +403,69 @@ def cmd_themes(args) -> int:
     return 0
 
 
+def cmd_supply_sheet(args) -> int:
+    """수급 시트를 통째로 읽어 피드의 빈 날을 메운다. 손으로만 돈다.
+
+    매일 도는 길(supply_demand.py --export)은 그날 순매수 API 응답을 그대로
+    내보내므로 코드가 정확하다. 이것은 그 길을 붙이기 전에 지나간 날, 또는
+    내보내기가 실패한 날을 메우기 위한 것이다. 이미 있는 날은 건드리지 않는다.
+    """
+    from sheets import Spreadsheet
+
+    import supply_demand as sd
+
+    code_map = load_code_map()
+    if not code_map:
+        print("[중단] codes.json 이 비어 있습니다. 먼저 "
+              "`python feed_export.py codes --from-naver` 를 돌리세요.", file=sys.stderr)
+        return 1
+    print(f"이름→코드 지도 {len(code_map)}종목")
+
+    book = Spreadsheet(sd.SPREADSHEET_ID)
+    labels, dates, blocks = [], [], []
+    for tab, cfg in sd.TABS.items():
+        gid = cfg["gid"]
+        for market, m in sd.MARKETS.items():
+            drow, frow = m["date_row"], m["first_row"]
+            last = frow + sd.ROWS - 1
+            if not labels:
+                shown = book.read_formatted(gid, f"B{drow}:K{drow}")
+                shown = ((shown[0] if shown else []) + [""] * sd.WIDTH)[:sd.WIDTH]
+                stored = book.read(gid, f"B{drow}:K{drow}")
+                stored = ((stored[0] if stored else []) + [""] * sd.WIDTH)[:sd.WIDTH]
+                labels = [str(shown[i * 2]).strip() for i in range(len(sd.SLOTS))]
+                dates = [sheet_day(stored[i * 2]) for i in range(len(sd.SLOTS))]
+            grid = book.read(gid, f"B{frow}:K{last}")
+            blocks.append([(list(r) + [""] * sd.WIDTH)[:sd.WIDTH] for r in grid])
+
+    print(f"시트 날짜 줄 [{' '.join(x or '-' for x in labels)}]")
+    days, missing = supply_days_from_sheet(labels, dates, blocks, code_map)
+    for day in days:
+        print(f"  {day['label']} ({day['date'] or '날짜 없음'}) — {len(day['stocks'])}종목")
+    if missing:
+        # 대개 ETF 다. 봇이 추천할 대상이 아니라 빠져도 손해가 없지만,
+        # 조용히 빠지면 왜 수가 모자란지 알 수 없다.
+        print(f"  [주의] 코드를 못 찾아 뺀 이름 {len(missing)}개: "
+              f"{', '.join(missing)}", file=sys.stderr)
+
+    feed_dir = Path(args.feed_dir)
+    previous = read_json(feed_dir / "supply" / "latest.json")
+    payload, added = merge_backfill(previous, days, labels,
+                                    datetime.now(KST).isoformat(timespec="seconds"))
+    kept = " ".join(d["label"] for d in payload["days"])
+    print(f"창 {len(payload['days'])}/{SUPPLY_WINDOW}일 [{kept}]"
+          + (f" — 새로 메운 날: {', '.join(added)}" if added else " — 메울 날이 없습니다"))
+
+    if args.dry_run:
+        print("dry-run — 파일을 쓰지 않았습니다")
+        return 0
+    if not added:
+        return 0
+    for path in write_feed(feed_dir, "supply", payload):
+        print(f"  기록 {path}")
+    return 0
+
+
 def cmd_supply(args) -> int:
     today = read_json(args.today)
     if not today or not today.get("stocks"):
@@ -351,6 +513,12 @@ def main() -> int:
                    help="supply_demand.py --export 가 쓴 오늘치")
     p.add_argument("--feed-dir", default="feed")
     p.set_defaults(func=cmd_supply)
+
+    p = sub.add_parser("supply-sheet",
+                       help="수급 시트를 통째로 읽어 피드의 빈 날을 메운다")
+    dry(p)
+    p.add_argument("--feed-dir", default="feed")
+    p.set_defaults(func=cmd_supply_sheet)
 
     p = sub.add_parser("codes", help="스캔이 본 이름->코드를 codes.json 에 쌓는다")
     dry(p)

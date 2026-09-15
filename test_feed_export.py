@@ -125,6 +125,94 @@ class SupplyWindow(unittest.TestCase):
         self.assertEqual(len(feed["days"]), 1)
 
 
+class SupplySheetBackfill(unittest.TestCase):
+    """시트 지난 칸 되살리기. 시트에는 코드가 없어 이름으로 맞춘다."""
+
+    LABELS = ["9/9", "9/10", "9/14", "9/15", ""]
+    DATES = ["20260909", "20260910", "", "20260915", ""]
+    MAP = {"삼성전자": "005930", "SK하이닉스": "000660"}
+
+    def block(self, *slots):
+        """슬롯마다 (이름, 금액) 목록을 받아 20행 x 10열 격자로."""
+        grid = [[""] * 10 for _ in range(20)]
+        for i, rows in enumerate(slots):
+            for r, (name, amount) in enumerate(rows):
+                grid[r][i * 2], grid[r][i * 2 + 1] = name, amount
+        return grid
+
+    def test_이름으로_코드를_맞춰_날을_만든다(self):
+        blocks = [self.block([("삼성전자", 1000)], [("SK하이닉스", 2000)])]
+        days, missing = feed_export.supply_days_from_sheet(
+            self.LABELS, self.DATES, blocks, self.MAP)
+        self.assertEqual([d["label"] for d in days], ["9/9", "9/10"])
+        self.assertEqual(days[0]["stocks"][0], {"code": "005930",
+                                                "name": "삼성전자", "amount": 1000})
+        self.assertEqual(days[0]["date"], "20260909")
+        self.assertEqual(missing, [])
+
+    def test_코드를_못_찾은_이름은_빠지고_기록된다(self):
+        # 대개 ETF 다. 없는 종목을 지어내는 것보다 빠지는 쪽이 안전하다.
+        blocks = [self.block([("삼성전자", 1000), ("KODEX 200", 900)])]
+        days, missing = feed_export.supply_days_from_sheet(
+            self.LABELS, self.DATES, blocks, self.MAP)
+        self.assertEqual(len(days[0]["stocks"]), 1)
+        self.assertEqual(missing, ["KODEX 200"])
+
+    def test_네_블록의_같은_종목은_더한다(self):
+        one = self.block([("삼성전자", 1000)])
+        two = self.block([("삼성전자", 500)])
+        days, _ = feed_export.supply_days_from_sheet(
+            self.LABELS, self.DATES, [one, two], self.MAP)
+        self.assertEqual(days[0]["stocks"][0]["amount"], 1500)
+
+    def test_빈_칸은_날이_되지_않는다(self):
+        # 9/14 슬롯(세 번째)에 아무것도 없다.
+        blocks = [self.block([("삼성전자", 1000)], [("삼성전자", 1000)], [])]
+        days, _ = feed_export.supply_days_from_sheet(
+            self.LABELS, self.DATES, blocks, self.MAP)
+        self.assertNotIn("9/14", [d["label"] for d in days])
+
+    def test_이미_있는_날은_건드리지_않는다(self):
+        # 순매수 API 가 준 날이 더 정확하다 -- 코드가 응답에 직접 들어 있다.
+        previous = {"days": [{"label": "9/15", "date": "20260915",
+                              "stocks": [{"code": "005930", "name": "API 것",
+                                          "amount": 9}]}]}
+        sheet = [{"label": "9/15", "date": "20260915", "source": "sheet-backfill",
+                  "stocks": [{"code": "005930", "name": "시트 것", "amount": 1}]},
+                 {"label": "9/9", "date": "20260909", "source": "sheet-backfill",
+                  "stocks": [{"code": "000660", "name": "하이닉스", "amount": 2}]}]
+        feed, added = feed_export.merge_backfill(previous, sheet, ["9/9", "9/15"], "t")
+        self.assertEqual(added, ["9/9"])
+        by = {d["label"]: d for d in feed["days"]}
+        self.assertEqual(by["9/15"]["stocks"][0]["name"], "API 것")
+
+    def test_시트_순서대로_정렬한다(self):
+        sheet = [{"label": lb, "date": "", "stocks": [{"code": "005930",
+                                                       "name": "가", "amount": 1}]}
+                 for lb in ("9/15", "9/9", "9/10")]
+        feed, _ = feed_export.merge_backfill(None, sheet, ["9/9", "9/10", "9/15"], "t")
+        self.assertEqual([d["label"] for d in feed["days"]], ["9/9", "9/10", "9/15"])
+
+
+class SheetDate(unittest.TestCase):
+    def test_구글_시리얼을_날짜로(self):
+        # 2026-09-15 = 1899-12-30 기준 46280일
+        self.assertEqual(feed_export.sheet_day(46280), "20260915")
+
+    def test_문자열도_받는다(self):
+        self.assertEqual(feed_export.sheet_day("2026-09-15"), "20260915")
+        self.assertEqual(feed_export.sheet_day("20260915"), "20260915")
+
+    def test_못_읽으면_빈_값(self):
+        self.assertEqual(feed_export.sheet_day(""), "")
+        self.assertEqual(feed_export.sheet_day(None), "")
+        self.assertEqual(feed_export.sheet_day("9/15"), "")
+
+    def test_여덟_자리_문자열을_시리얼로_읽지_않는다(self):
+        # '20260915' 를 숫자로 먼저 보면 2천만 일이 지난 날짜가 되어 죽는다.
+        self.assertEqual(feed_export.sheet_day("20260915"), "20260915")
+
+
 class SupplyExport(unittest.TestCase):
     @staticmethod
     def rows(*pairs):
