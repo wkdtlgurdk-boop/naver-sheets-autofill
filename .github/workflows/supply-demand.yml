@@ -2,11 +2,21 @@ name: supply-demand-autofill
 
 on:
   schedule:
-    # 20:10 KST on weekdays (11:10 UTC). The foreign/institution figures are
-    # still marked estimated at 18:00 (measured 2026-09-07) and settled by
-    # 20:05, so this is the earliest hour known to be safe -- not a habit.
-    # Scheduled runs on this repo start 5-13 minutes late, which is fine here.
-    - cron: "10 11 * * 1-5"
+    # 21:10 and 22:10 KST on weekdays (12:10 / 13:10 UTC).
+    #
+    # 20:10 was tuned on 2026-09-07, when the figures were estimated at 18:00
+    # and settled by 20:05. KRX then extended trading to 20:00 and that
+    # premise died: 2026-09-14 20:20 still returned estimated=true for
+    # 외인/KOSPI, so the run skipped and the day never got written.
+    #
+    # How much later settlement now lands is not measured, so this does not
+    # try to name the minute. The first run takes the likely time and the
+    # second covers being wrong about it -- writing is idempotent (the day's
+    # slot is found by its date label and overwritten with the same values),
+    # so a second pass on an already-filled day costs nothing. Once a few
+    # nights of logs show the first run settling reliably, drop the second.
+    - cron: "10 12 * * 1-5"
+    - cron: "10 13 * * 1-5"
   workflow_dispatch:
 
 concurrency:
@@ -33,4 +43,8 @@ jobs:
       - name: Write supply-demand sheet
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          # 그날의 마지막 예약 실행에서만 켠다. 거기서도 아직 확정 전이면
+          # 그 하루가 빠지는 것이므로 초록불로 넘기지 않고 빨갛게 남긴다.
+          # (휴장일은 해당 없음 -- 그때는 오늘 자료 자체가 없어 조용히 끝난다.)
+          SD_STRICT: ${{ github.event.schedule == '10 13 * * 1-5' && '1' || '' }}
         run: python supply_demand.py

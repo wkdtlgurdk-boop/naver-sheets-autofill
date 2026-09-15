@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.parse
 import urllib.request
@@ -58,7 +59,17 @@ def fetch(investor_type: str, market_type: str) -> list[dict]:
 
 
 class NotSettled(Exception):
-    """오늘 확정치가 아직 아니다. 오류가 아니라 '아직'이다."""
+    """오늘 확정치가 아직 아니다. 오류가 아니라 '아직'이다.
+
+    `trading_day` 는 오늘이 장이 선 날인지를 가른다. True 면 오늘 자료가
+    오긴 왔는데 아직 안 굳은 것이고(늦게 돌면 해결된다), False 면 애초에
+    오늘 자료가 없는 것이다(휴장일 -- 기다려도 안 나온다). 마지막 실행에서
+    둘을 같이 취급하면 공휴일마다 빨간 실행이 쌓여 진짜 고장을 가린다.
+    """
+
+    def __init__(self, message: str, trading_day: bool = True):
+        super().__init__(message)
+        self.trading_day = trading_day
 
 
 def validate(rows: list[dict], today: str, label: str) -> None:
@@ -72,9 +83,11 @@ def validate(rows: list[dict], today: str, label: str) -> None:
         raise NotSettled(f"{label}: {ROWS}종목이 안 됨 ({len(rows)}개)")
     top = rows[0]
     if top.get("bizdateFrom") != today:
+        # 오늘 자료가 아예 없다 = 휴장일로 본다. 늦게 다시 돌아도 안 바뀐다.
         raise NotSettled(
             f"{label}: 데이터 날짜가 오늘이 아님 "
-            f"(응답 {top.get('bizdateFrom')}, 오늘 {today}). 휴장일이거나 확정 전.")
+            f"(응답 {top.get('bizdateFrom')}, 오늘 {today}). 휴장일이거나 확정 전.",
+            trading_day=False)
     if top.get("estimated"):
         raise NotSettled(f"{label}: 장중 추정치(estimated=true)")
     if int(top.get("accTradeAmount") or 0) <= 0:
@@ -134,6 +147,14 @@ def main() -> int:
         # 휴장일과 확정 전은 고장이 아니다. 실패로 끝내면 매 휴일마다 빨간
         # 실행이 쌓여서 진짜 고장을 가린다.
         print(f"[건너뜀] {exc}")
+        # 다만 그날의 마지막 실행까지 건너뛰면 그 하루는 영영 빈 채로 남는다.
+        # 2026-09-14 가 그랬다 -- 20:20 에 estimated=true 라 건너뛰었고, 초록불
+        # 이라 아무도 몰랐다가 다음 날 사람이 발견했다. 마지막 실행에서 '오늘은
+        # 장이 섰는데 아직 안 굳었다' 면 빨갛게 남겨 눈에 띄게 한다.
+        if os.environ.get("SD_STRICT") and exc.trading_day:
+            print("[중단] 마지막 실행인데 아직 확정 전입니다 — 오늘치가 빠집니다. "
+                  "확정 시각이 더 밀렸는지 보고 cron 을 조정하세요.", file=sys.stderr)
+            return 1
         return 0
 
     book = Spreadsheet(SPREADSHEET_ID)
