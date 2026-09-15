@@ -80,6 +80,39 @@ def save_code_map(mapping: dict[str, str], path: Path | None = None) -> None:
         f.write("\n")
 
 
+def codes_from_naver() -> dict[str, str]:
+    """네이버 테마 구성종목을 훑어 이름->코드를 통째로 긁는다. 요청이 많다.
+
+    평소에는 쓸 일이 없다. 매일의 스캔이 raw_scan.json 에 남기는 조건 충족
+    종목이 곧 시트에 오를 수 있는 것의 전부라, 그쪽에서 공짜로 얻기 때문이다.
+
+    이것이 필요한 때는 지도가 아직 없을 때다 -- 내보내기를 붙이기 전에 돈
+    날의 피드를 다시 만들면, 그날 스캔 결과가 작업 폴더에 없고 codes.json 도
+    비어 있어서 시트의 종목 전부가 코드 없이 나간다. 2026-09-15 이 그랬다.
+
+    조건 충족 여부를 보지 않고 구성종목을 전부 담는다. 지도는 오늘 오른
+    종목만이 아니라 언젠가 시트에 오를 수 있는 이름을 알고 있어야 한다.
+    """
+    import theme_scan
+
+    out: dict[str, str] = {}
+    themes = theme_scan.fetch_theme_list()
+    print(f"  테마 {len(themes)}개에서 구성종목을 훑습니다 (요청이 그만큼 나갑니다)",
+          file=sys.stderr)
+    for theme in themes:
+        try:
+            stocks = theme_scan.fetch_theme_stocks(theme["no"])
+        except Exception as exc:
+            print(f"  [건너뜀] 테마 {theme.get('name') or theme['no']}: {exc}",
+                  file=sys.stderr)
+            continue
+        for stock in stocks:
+            name, code = str(stock.get("name") or ""), str(stock.get("code") or "")
+            if name and code:
+                out[name] = code.zfill(6)
+    return out
+
+
 def codes_from_scan(raw_scan: list[dict], groups: list[dict]) -> dict[str, str]:
     """오늘 스캔이 본 이름->코드. 두 파일 모두에서 긁는다.
 
@@ -213,8 +246,11 @@ def read_json(path: Path | str, default=None):
 def cmd_codes(args) -> int:
     mapping = load_code_map()
     before = len(mapping)
-    mapping.update(codes_from_scan(read_json(args.scan, []) or [],
-                                   read_json(args.groups, []) or []))
+    if args.from_naver:
+        mapping.update(codes_from_naver())
+    else:
+        mapping.update(codes_from_scan(read_json(args.scan, []) or [],
+                                       read_json(args.groups, []) or []))
     print(f"codes.json: {before} -> {len(mapping)}종목 (+{len(mapping) - before})")
     if args.dry_run:
         print("dry-run — 파일을 쓰지 않았습니다")
@@ -320,6 +356,9 @@ def main() -> int:
     dry(p)
     p.add_argument("--scan", default="raw_scan.json")
     p.add_argument("--groups", default="final_groups.json")
+    p.add_argument("--from-naver", action="store_true",
+                   help="스캔 결과 대신 네이버 구성종목을 통째로 훑는다 "
+                        "(지도가 비어 있을 때. 요청이 수백 건 나간다)")
     p.set_defaults(func=cmd_codes)
 
     args = ap.parse_args()
