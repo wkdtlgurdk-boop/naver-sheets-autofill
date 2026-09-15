@@ -25,10 +25,18 @@ on:
         description: "읽어서 보여주기만 하고 올리지 않음"
         type: boolean
         default: false
+      skip_codes:
+        description: "이름→코드 지도 갱신을 건너뛴다 (지도가 이미 충분할 때)"
+        type: boolean
+        default: false
 
 concurrency:
   group: feed-republish
   cancel-in-progress: false
+
+# 갱신한 이름->코드 지도를 저장소에 되돌려 놓는다.
+permissions:
+  contents: write
 
 jobs:
   republish:
@@ -46,6 +54,28 @@ jobs:
 
       - name: Run logic tests
         run: python test_feed_export.py
+
+      # 시트에는 종목코드가 없고, 지도는 매일의 스캔이 채운다. 그런데 이
+      # 워크플로가 메우려는 날은 대개 그 스캔이 없던 날이다 -- 2026-09-15 에
+      # 처음 돌렸을 때 시트의 27종목이 전부 코드 없이 나갔고, 봇 입장에서는
+      # 그 피드가 빈 것과 같다.
+      #
+      # 그래서 여기서는 네이버 구성종목을 통째로 훑어 지도부터 채운다. 매일
+      # 도는 길에서는 스캔이 이미 들고 있는 것을 쓰므로 이 비용이 없다.
+      - name: Refresh the name-to-code map
+        if: ${{ inputs.skip_codes != true }}
+        run: python feed_export.py codes --from-naver
+
+      - name: Commit the code map
+        if: ${{ inputs.skip_codes != true && inputs.dry_run != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add codes.json
+          git diff --cached --quiet && echo "지도에 바뀐 것이 없습니다" && exit 0
+          git commit -m "Refresh the stock code map"
+          git pull --rebase --autostash origin ${{ github.ref_name }}
+          git push origin HEAD:${{ github.ref_name }}
 
       - name: Republish theme feed
         env:
