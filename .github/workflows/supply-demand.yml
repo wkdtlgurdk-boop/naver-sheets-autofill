@@ -2,19 +2,24 @@ name: supply-demand-autofill
 
 on:
   schedule:
-    # 21:10 and 22:10 KST on weekdays (12:10 / 13:10 UTC).
+    # 20:20, 21:10, 22:10 KST on weekdays (11:20 / 12:10 / 13:10 UTC).
     #
     # 20:10 was tuned on 2026-09-07, when the figures were estimated at 18:00
     # and settled by 20:05. KRX then extended trading to 20:00 and that
-    # premise died: 2026-09-14 20:20 still returned estimated=true for
-    # 외인/KOSPI, so the run skipped and the day never got written.
+    # premise died: 2026-09-14 still returned estimated=true for 외인/KOSPI at
+    # 20:20, so the run skipped and the day never got written.
     #
-    # How much later settlement now lands is not measured, so this does not
-    # try to name the minute. The first run takes the likely time and the
-    # second covers being wrong about it -- writing is idempotent (the day's
-    # slot is found by its date label and overwritten with the same values),
-    # so a second pass on an already-filled day costs nothing. Once a few
-    # nights of logs show the first run settling reliably, drop the second.
+    # Where settlement now lands is unmeasured, so rather than name the
+    # minute, try three times and let the earliest one that works win.
+    # 20:20 is the optimistic attempt -- it is the hour that failed on 9/14,
+    # so expect it to skip often, but on a day it lands the sheet is filled
+    # an hour and a half sooner. Writing is idempotent (the day's slot is
+    # found by its date label and overwritten with identical values), so the
+    # later passes cost nothing once one has succeeded.
+    #
+    # Once a few weeks of logs show which hour actually settles, cut this
+    # back to that one plus a single backstop.
+    - cron: "20 11 * * 1-5"
     - cron: "10 12 * * 1-5"
     - cron: "10 13 * * 1-5"
   workflow_dispatch:
