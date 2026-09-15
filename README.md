@@ -78,7 +78,15 @@ test_feed_export.py 내보내기 규칙 검증 (인증 불필요)
 ```
 theme-calendar.yml  시트 기록 → 되읽기 → theme_bot/feed/themes/<날짜>.json, latest.json
 supply-demand.yml   시트 기록 →           theme_bot/feed/supply/<날짜>.json, latest.json
+feed-republish.yml  (손으로만) 시트를 읽기만 해서 테마 피드를 다시 내보낸다
 ```
+
+`feed-republish.yml` 이 따로 있는 이유: `theme-calendar.yml` 을 다시 돌리면
+스캔부터 카드 렌더까지 다 하고 theme_bot 의 그날 카드 폴더를 갈아 끼우는데,
+스레드에 이미 올라간 글이 그 이미지 URL 을 가리키고 있다. 피드 하나 만들자고
+카드를 다시 그리게 둘 수 없다. 내보내기를 붙이기 전에 지나간 날을 메울 때,
+사람이 시트 블록을 고친 뒤 봇에 반영할 때, 내보내기가 실패한 날을 다시 밀어
+넣을 때 쓴다. 시트에 쓰지 않고 읽기만 한다.
 
 봇 저장소에는 구글 인증이 없다. 그래서 카드가 이미 다니는 길(공개 저장소
 `theme_bot`)로 같이 내보내고, 봇은 `raw.githubusercontent.com` 으로 받는다.
