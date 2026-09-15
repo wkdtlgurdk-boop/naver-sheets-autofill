@@ -291,6 +291,9 @@ def write_day(fresh: dict, day: datetime, label: str,
 
             idx, shift = plan_slots(labels, label)
             dropped = labels[0] if shift else None
+            # labels 를 고치기 '전에' 잡아 둔다. 고친 뒤에 찾으면 그 칸은 이미
+            # 오늘 날짜라 덮어쓴 것인지 빈 칸이었는지 구별할 수 없다.
+            overwrote = labels[idx] == label
             if shift:
                 labels = labels[1:] + [""]
                 dates = dates[1:] + [""]
@@ -309,7 +312,7 @@ def write_day(fresh: dict, day: datetime, label: str,
 
             windows[f"{tab}/{market}"] = list(labels)
             how = (f"한 칸 밀어냄({dropped} 버림)" if shift
-                   else "이미 있던 칸 덮어씀" if label in labels[:idx] + labels[idx + 1:]
+                   else "이미 있던 칸 덮어씀" if overwrote
                    else "빈 칸에 추가")
             print(f"  {tab}/{market}: {SLOTS[idx]}{frow} — {how}"
                   f"  [{' '.join(x or '-' for x in labels)}]")

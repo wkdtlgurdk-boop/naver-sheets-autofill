@@ -95,6 +95,36 @@ def test_non_numeric_amount_stops() -> None:
     expect_stop(four_blocks(**{"외인/KOSPI": bad}), "숫자가 아닙니다")
 
 
+def describe(labels: list[str], label: str) -> str:
+    """write_day 의 로그 한 줄이 무엇을 말하는지 그대로 재현한다."""
+    idx, shift = sd.plan_slots(labels, label)
+    dropped = labels[0] if shift else None
+    overwrote = labels[idx] == label
+    if shift:
+        labels = labels[1:] + [""]
+    labels[idx] = label
+    return (f"한 칸 밀어냄({dropped} 버림)" if shift
+            else "이미 있던 칸 덮어씀" if overwrote
+            else "빈 칸에 추가")
+
+
+def test_log_says_overwrote_when_the_day_is_already_there() -> None:
+    # 하루 세 번 시도하는 구조라 두 번째·세 번째 실행은 같은 칸을 덮어쓴다.
+    # 그것이 안전하다는 증거가 이 로그 한 줄뿐이므로, 여기서 '빈 칸에 추가'
+    # 라고 말하면 창이 밀렸는지 아닌지를 로그로 판별할 수 없게 된다.
+    assert describe(["9/9", "9/10", "9/11", "9/14", "9/15"], "9/15") == \
+        "이미 있던 칸 덮어씀"
+
+
+def test_log_says_shifted_when_the_window_is_full() -> None:
+    assert describe(["9/8", "9/9", "9/10", "9/11", "9/14"], "9/15") == \
+        "한 칸 밀어냄(9/8 버림)"
+
+
+def test_log_says_added_when_a_slot_is_free() -> None:
+    assert describe(["9/9", "9/10", "", "", ""], "9/11") == "빈 칸에 추가"
+
+
 if __name__ == "__main__":
     passed = 0
     for name, fn in sorted(globals().items()):
