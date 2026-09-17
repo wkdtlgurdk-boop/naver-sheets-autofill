@@ -2,21 +2,29 @@ name: theme-calendar-autofill
 
 on:
   schedule:
-    # Lands at 16:00 KST on weekdays. The figures this job reads settle right
-    # after the 15:30 close (measured 2026-09-07 — the index page's foreign-net
-    # number moved 340bn won at 15:31-15:33 and then 0.8bn over the next hour),
-    # so 16:00 is early enough to be safe and leaves the card bot room.
+    # 20:20 KST 도착을 노린다 (11:10 UTC + 평소 지연 5~13분).
     #
-    # 06:55 UTC, not 07:00, and the difference is the point. Scheduled runs on
-    # this repo start 5-13 minutes late (measured 2026-09-07: 5:08 and 12:45),
-    # so :55 arrives around 16:00-16:08 KST. Asking for 07:00 would not arrive
-    # at 16:00 — it would arrive later, and the top of the hour is where the
-    # worst delays on record sit (a sibling repo's "0 8" runs came in 113-141
-    # minutes late and skipped a day outright). Never move this to :00.
+    # 16:00 이었다. 그때는 장이 15:30 에 끝났고 지표도 15:31~15:33 에 자리를
+    # 잡았다(2026-09-07 실측). 그런데 KRX 가 거래시간을 20:00 까지 늘리면서 그
+    # 전제가 죽었다 — 16:00 스캔은 종가가 아니라 **장중 시세**를 읽어 그것을
+    # 그날의 종가로 시트에 적고 있었다. 카드도 스레드도 아침 매수 후보 봇도
+    # 전부 그 숫자를 물려받는다.
     #
-    # The card bot fires at 16:40 local and publishes at 17:00, so even the
-    # slowest run seen here still lands the sheet with half an hour to spare.
-    - cron: "55 6 * * 1-5"
+    # 11:10 UTC 이지 11:20 도 12:00 도 아니다. 이 저장소의 예약 실행은 5~13분
+    # 늦게 시작하므로(2026-09-07 실측: 5분 08초, 12분 45초) :10 이면
+    # 20:15~20:23 에 도착한다. 정각은 그 지연이 제일 심한 자리라 피한다 --
+    # 형제 저장소의 "0 8" 실행이 113~141분 늦고 하루는 통째로 건너뛴 전력이
+    # 있다. **절대 :00 으로 옮기지 말 것.**
+    #
+    # 수급(supply-demand.yml)은 같은 20:20 부터 세 번 시도한다. 그쪽은 외국인·
+    # 기관 확정치를 기다려야 해서 늦고, 이쪽은 가격·거래량만 보므로 마감 직후면
+    # 충분하다. 두 워크플로는 concurrency 그룹이 달라 서로 막지 않는다.
+    #
+    # 2026-09-17 에 GitHub 스케줄러가 이 저장소의 아침 실행을 통째로 건너뛰었다
+    # (8/28 에도 같은 일이 있었다). 누락이 반복되면 industry-report-telegram-bot
+    # /appsscript/dispatch.gs 처럼 Apps Script 타이머에서 workflow_dispatch 를
+    # 때리는 쪽으로 옮긴다.
+    - cron: "10 11 * * 1-5"
   workflow_dispatch:
     inputs:
       skip_sheet:

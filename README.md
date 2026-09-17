@@ -76,8 +76,8 @@ test_feed_export.py 내보내기 규칙 검증 (인증 불필요)
 '여행' 테마가 추천으로 나갔다. 기준이 둘이면 답도 둘이다.
 
 ```
-theme-calendar.yml  시트 기록 → 되읽기 → theme_bot/feed/themes/<날짜>.json, latest.json
-supply-demand.yml   시트 기록 →           theme_bot/feed/supply/<날짜>.json, latest.json
+theme-calendar.yml  20:20 KST  시트 기록 → 되읽기 → theme_bot/feed/themes/
+supply-demand.yml   20:20~22:10 시트 기록 →        theme_bot/feed/supply/
 feed-republish.yml  (손으로만) 시트를 읽기만 해서 테마 피드를 다시 내보낸다
 ```
 
