@@ -367,6 +367,11 @@ def main() -> int:
         return rc
 
     now = datetime.now(KST)
+    # KRX 거래 마감(20:00) 이전이고 평일이면 어제를 본다.
+    # 20:00 이후는 오늘 종가가 확정되었으므로 오늘을 본다.
+    if now.hour < 20 and now.weekday() < 5:
+        now = now - timedelta(days=1)
+
     if now.weekday() > 4:
         print(f"[건너뜀] 주말({now:%A})")
         return 0

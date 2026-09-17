@@ -25,10 +25,22 @@ def as_of() -> tuple[datetime, bool]:
     두 번째 값이 True 면 지난 날짜를 손보는 실행이다. 부르는 쪽은 그걸 보고
     평소와 다르게 굴 수 있다 — 주말 가드를 건너뛰거나, 이미 지난 날짜를
     스레드에 다시 올리지 않거나.
+
+    KRX 거래시간: 월~금 09:00~20:00. 20:00 이후 스크립트는 오늘 종가를
+    읽을 수 있으므로 오늘 날짜를 쓴다. 20:00 이전은 어제 종가인데,
+    실행이 지연되어 다음날 새벽에 돌면 오늘 날짜로 어제 데이터를 기록하는
+    버그가 생긴다. 그래서 20:00 기준선을 둔다.
+
+    휴장일은 THEME_AS_OF로 수동 처리한다.
     """
     raw = os.environ.get("THEME_AS_OF", "").strip()
     if not raw:
-        return datetime.now(KST), False
+        now = datetime.now(KST)
+        # KRX 거래 마감(20:00) 이전이고 평일이면 어제를 본다.
+        # 주중이라도 20:00 이후면 오늘 종가가 나왔으므로 오늘.
+        if now.hour < 20 and now.weekday() < 5:
+            now = now - timedelta(days=1)
+        return now, False
     try:
         day = datetime.strptime(raw, "%Y-%m-%d")
     except ValueError:
