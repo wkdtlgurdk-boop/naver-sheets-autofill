@@ -91,15 +91,20 @@ def validate(rows: list[dict], today: str, label: str) -> None:
     장중에는 FOREIGNER 가 estimated=true 에 금액 0 인 오늘치를 주고,
     ORGANIZATION 은 아직 어제 확정치를 준다 -- 서로 다른 날짜가 한 시트에
     들어가는 것이 제일 나쁜 결과다.
+
+    KRX 애프터장(20:00 마감) 도입으로 API 확정이 1일 밀려, 20:20 스케줄
+    실행은 어제 데이터를 받는다 -- 그래서 오늘·어제 둘 다 받아들인다.
     """
     if len(rows) < ROWS:
         raise NotSettled(f"{label}: {ROWS}종목이 안 됨 ({len(rows)}개)")
     top = rows[0]
-    if top.get("bizdateFrom") != today:
-        # 오늘 자료가 아예 없다 = 휴장일로 본다. 늦게 다시 돌아도 안 바뀐다.
+    data_date = top.get("bizdateFrom")
+    yesterday = str(int(today) - 1)
+    # 오늘 또는 어제 데이터는 OK. 2일 이상 밀려 있거나 앞서면 휴장일 또는 고장.
+    if data_date not in (today, yesterday):
         raise NotSettled(
-            f"{label}: 데이터 날짜가 오늘이 아님 "
-            f"(응답 {top.get('bizdateFrom')}, 오늘 {today}). 휴장일이거나 확정 전.",
+            f"{label}: 데이터 날짜가 너무 오래됨 또는 미래 "
+            f"(응답 {data_date}, 기대 {today}/{yesterday}). 휴장일이거나 API 고장.",
             trading_day=False)
     if top.get("estimated"):
         raise NotSettled(f"{label}: 장중 추정치(estimated=true)")
