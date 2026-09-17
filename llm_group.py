@@ -26,6 +26,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -83,6 +86,22 @@ misfit_stocks — 그 테마 안에 있지만 지금 사업 내용이 테마와 
 같이 적어 주세요(belongs). 오늘 많이 올랐다는 이유로 고르지 마세요 —
 사업 내용이 안 맞을 때만입니다."""
 
+# CLI 에는 API 의 json_schema 출력 강제가 없다. 형식을 말로 못 박는다.
+SCHEMA_NOTE = """\
+답은 **JSON 만** 내보내세요. 설명·머리말·```울타리 없이 이 형태 그대로입니다.
+
+{"groups": [{"keyword": "묶음 이름",
+             "source_themes": ["오늘 목록에 있던 테마명", "..."],
+             "reason": "왜 묶었는지 한 줄"}],
+ "stale_themes": [{"theme": "테마명", "reason": "왜 낡았는지"}],
+ "misfit_stocks": [{"stock": "종목명", "theme": "그 종목이 들어 있는 테마명",
+                    "belongs": "원래 어울리는 자리", "reason": "왜 안 맞는지"}]}
+
+source_themes 와 theme 에는 **드린 목록에 있는 테마명만** 정확히 그대로
+적으세요. 없는 이름을 지어내면 그 항목은 버려집니다.
+stale_themes 와 misfit_stocks 는 없으면 빈 배열로 두세요.
+"""
+
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -135,6 +154,77 @@ SCHEMA = {
 # 얇아진다. 오늘 테마의 3분의 1을 넘게 지우자고 하면 판단이 아니라 오작동에
 # 가까우므로 통째로 버린다.
 STALE_SHARE_CAP = 3
+
+
+FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")
+TIMEOUT_SEC = 300
+
+
+def cli_available() -> str | None:
+    """구독으로 부를 수 있으면 None, 아니면 사유.
+
+    API 키가 아니라 Claude Code CLI 로 부른다. 사용자가 구독자라 토큰당 과금
+    대신 구독 한도 안에서 쓴다 -- industry-report-telegram-bot/summarizer.py 가
+    같은 이유로 먼저 옮겨 갔고, 여기도 그 길을 따른다.
+
+    CLI 는 CLAUDE_CODE_OAUTH_TOKEN 을 읽는다 (`claude setup-token` 으로 만드는
+    1년짜리 토큰).
+    """
+    if shutil.which("claude") is None:
+        return "claude CLI 가 없습니다"
+    if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return "CLAUDE_CODE_OAUTH_TOKEN 이 없습니다"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        # 인증 우선순위상 API 키가 이긴다. 구독으로 돌리려던 호출이 조용히
+        # 과금되는 상황이라 로그로 남긴다.
+        print("[llm_group] 경고: ANTHROPIC_API_KEY 가 설정돼 있어 구독 토큰 대신 "
+              "API 키로 과금됩니다.", file=sys.stderr)
+    return None
+
+
+def run_claude(prompt: str) -> str | None:
+    """CLI 한 번. 본문 텍스트를 돌려주고, 실패하면 None.
+
+    CLI 에는 API 의 json_schema 출력 강제가 없다. 대신 시스템 프롬프트로
+    형식을 못 박고 받은 뒤 파싱한다 -- validate() 가 어차피 테마 이름까지
+    대조하므로, 형식이 어긋나면 거기서 걸린다.
+    """
+    cmd = [
+        "claude", "-p",
+        "--output-format", "json",
+        "--model", MODEL,
+        "--system-prompt", SYSTEM + "\n\n" + SCHEMA_NOTE,
+        "--max-turns", "1",
+        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+        "--restricted",
+        "--disallowedTools", "Bash", "Write", "Edit", "WebFetch", "WebSearch",
+    ]
+    try:
+        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
+                              timeout=TIMEOUT_SEC)
+    except subprocess.TimeoutExpired:
+        print(f"[llm_group] {TIMEOUT_SEC}초 안에 끝나지 않았습니다.", file=sys.stderr)
+        return None
+    if proc.returncode != 0:
+        # 인증 실패는 stderr 가 비고 stdout 으로만 나온 적이 있다. 둘 다 본다.
+        detail = (proc.stderr.strip() or proc.stdout.strip() or "(출력 없음)")[:400]
+        print(f"[llm_group] claude 종료코드 {proc.returncode}: {detail}", file=sys.stderr)
+        return None
+    try:
+        envelope = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        print(f"[llm_group] CLI 출력을 읽지 못했습니다: {proc.stdout[:200]}",
+              file=sys.stderr)
+        return None
+    if envelope.get("is_error") or envelope.get("subtype") != "success":
+        print(f"[llm_group] 호출 실패: subtype={envelope.get('subtype')}", file=sys.stderr)
+        return None
+    return envelope.get("result")
+
+
+def strip_fence(text: str) -> str:
+    """```json 울타리를 벗긴다. CLI 는 감싸서 줄 때가 있다."""
+    return FENCE_RE.sub("", (text or "").strip())
 
 
 def give_up(why: str) -> int:
@@ -347,8 +437,9 @@ def record_exclusions(stale: list[dict], misfits: list[dict], today: str) -> int
 
 
 def main() -> int:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return give_up("ANTHROPIC_API_KEY 가 없습니다")
+    unavailable = cli_available()
+    if unavailable:
+        return give_up(unavailable)
     if not RAW.exists():
         return give_up(f"{RAW.name} 이 없습니다 (theme_scan.py 를 먼저 실행)")
 
@@ -367,36 +458,18 @@ def main() -> int:
         print(f"[llm_group] 제외 적용: {scanned}개 -> {len(raw)}개", file=sys.stderr)
     known = {t["theme_name"] for t in raw}
 
-    try:
-        import anthropic
-    except ImportError:
-        return give_up("anthropic 패키지가 설치되지 않았습니다")
-
     prompt = (
         f"오늘 조건을 충족한 테마 {len(raw)}개입니다. "
         f"슬롯은 {TARGET_GROUPS}개뿐이니 그 안에 들어가도록 묶어 주세요.\n\n"
         + describe(raw)
     )
 
-    try:
-        client = anthropic.Anthropic()
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=16000,
-            system=SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
-            thinking={"type": "adaptive"},
-            output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
-        )
-    except Exception as exc:  # noqa: BLE001 - 어떤 실패든 파이프라인은 계속된다
-        return give_up(f"API 호출 실패: {type(exc).__name__}: {exc}")
-
-    if resp.stop_reason == "refusal":
-        return give_up(f"모델이 거부했습니다 ({resp.stop_details})")
+    text = run_claude(prompt)
+    if not text:
+        return give_up("CLI 호출이 결과를 주지 않았습니다")
 
     try:
-        text = next(b.text for b in resp.content if b.type == "text")
-        answer = json.loads(text)
+        answer = json.loads(strip_fence(text))
         groups = validate(answer["groups"], known)
         stale, misfits = validate_exclusions(
             answer.get("stale_themes") or [], answer.get("misfit_stocks") or [], raw)

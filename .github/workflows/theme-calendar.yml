@@ -87,9 +87,18 @@ jobs:
       # whichever member name is shortest. This step exits 0 without touching
       # keywords.json when the key is missing or the call fails, so a bad day
       # here degrades to yesterday's keywords rather than skipping the write.
+      # 구독으로 부른다. 토큰당 과금되는 API 키 대신 Claude Code CLI 가
+      # CLAUDE_CODE_OAUTH_TOKEN 을 읽는다 (`claude setup-token` 으로 만드는
+      # 1년짜리 토큰). industry-report-telegram-bot 이 같은 이유로 먼저
+      # 옮겨 갔고 그쪽 워크플로와 같은 모양이다.
+      - run: npm install -g @anthropic-ai/claude-code
+
       - name: Group themes with Claude
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # ANTHROPIC_API_KEY 를 넘기지 않는다. 인증 우선순위상 그쪽이
+          # CLAUDE_CODE_OAUTH_TOKEN 을 이겨서, 구독으로 돌리려던 호출이
+          # 조용히 과금된다.
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: python llm_group.py
 
       # Re-derive the groups under the new keywords, reusing the scan on disk.
@@ -121,7 +130,12 @@ jobs:
           for g in groups:
               top = g["top5"][0] if g["top5"] else None
               head = f"{top['name']} {top['rate']:+.2f}%" if top else "(none)"
+              # source_themes 도 찍는다. 그룹 이름이 엉뚱할 때 어느 네이버
+              # 테마가 그 이름을 끌고 왔는지는 이것 없이는 알 수 없다 --
+              # 2026-09-16 광통신 종목들이 '반도체·IT 대표주'로 나간 건이
+              # 그랬다.
               print(f"  [{g['keyword']}] {len(g['top5'])} stocks, top: {head}")
+              print(f"      <- {', '.join(g.get('source_themes') or [])}")
           PY
 
       # 시트는 하루 한 번만 써야 한다. 오늘 블록이 이미 절반 찬 상태에서 다시

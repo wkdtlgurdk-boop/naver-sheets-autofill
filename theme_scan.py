@@ -35,6 +35,7 @@ MID_CAP = 1000       # 억원 — 중간 문턱. 크게 오른 중형주를 받�
 MID_RATE = 12.0       # %
 SURGE_CAP = 500      # 억원 — 급등주에만 적용하는 완화 문턱
 SURGE_RATE = 20.0     # %
+MIN_AMOUNT = 10_000    # 백만원 = 100억. 거래대금 문턱.
 MIN_COUNT = 3          # qualifying stocks needed for a theme to count
 MERGE_THRESHOLD = 0.6  # overlap coefficient for auto-merge
 SCAN_PAGES = 3         # 목록 전체를 읽는다 (2026-09-11 실측 266개 = 3페이지)
@@ -304,8 +305,18 @@ def num(value):
         return None
 
 
-def qualifies(rate, cap):
+def qualifies(rate, cap, amount=None):
     """오늘 이 종목이 자기 테마를 대표할 만한가.
+
+    **거래대금 100억이 먼저다.** 시총만 보면 하루 25억 거래된 종목이 테마
+    대표로 올라온다 -- 2026-09-16 에이스테크(+29.97%, 거래대금 25억)가 그랬다.
+    시총이 크다고 오늘 거래가 있었던 것은 아니고, 사람이 실제로 살 수 있는
+    자리인지는 거래대금이 말한다. 아침 매수 후보 봇도 같은 문턱을 관문에 걸고
+    있어서, 시트에만 올라오고 봇에서는 떨어지는 종목이 생기던 것도 같이 없어진다.
+
+    단위는 시트와 같은 백만원이다(accumulatedTradingValue). amount 를 주지
+    않으면 이 문턱을 건너뛴다 -- 옛 raw_scan.json 을 --regroup 으로 다시
+    돌릴 때 그 값이 없기 때문이다.
 
     문턱이 둘이다. 평소에는 시총 2000억 이상이 5% 넘게 오른 경우지만,
     20% 넘게 오른 종목은 시총 500억까지 받는다.
@@ -323,6 +334,8 @@ def qualifies(rate, cap):
     통째로 사라진 것이다. 급등 구간에서 도는 중소형주가 그날 시장이 실제로
     반응한 곳이므로, 그 구간에서만 시총을 낮춰 센다.
     """
+    if amount is not None and amount < MIN_AMOUNT:
+        return False
     if rate >= SURGE_RATE and cap >= SURGE_CAP:
         return True
     if rate >= MID_RATE and cap >= MID_CAP:
@@ -402,7 +415,8 @@ def scan_themes():
     for t in themes:
         name = t.get("name") or str(t.get("no"))
         stocks = fetch_theme_stocks(t["no"])
-        qualifying = [s for s in stocks if qualifies(s["rate"], s["cap"])]
+        qualifying = [s for s in stocks
+                      if qualifies(s["rate"], s["cap"], s.get("amount"))]
         if len(qualifying) >= MIN_COUNT:
             results.append({
                 "theme_name": name,
@@ -541,8 +555,15 @@ def build_output(final_groups):
             top5.append(s)
             if len(top5) == 5:
                 break
-        if not top5:
-            print(f"[WARN] {p['keyword']}: 모든 종목이 다른 그룹에 배정되어 제외",
+        # 배정 뒤에 다시 센다. MIN_COUNT 는 병합 전 테마마다 보는 값이라,
+        # 앞 그룹이 종목을 먼저 가져가면 여기서 3개 밑으로 내려앉는다 --
+        # 2026-09-16 에 철도·디스플레이폰부품·2차전지가 나란히 2종목으로
+        # 시트에 올라갔다. '조건 충족 3개 이상인 테마'라고 해 놓고 2개짜리
+        # 슬롯을 내보내면 그 말이 아니게 된다.
+        if len(top5) < MIN_COUNT:
+            taken -= {s["code"] for s in top5}   # 뒤 그룹이 다시 쓸 수 있게 돌려준다
+            print(f"[제외] {p['keyword']} — 배정 후 {len(top5)}종목 "
+                  f"(MIN_COUNT {MIN_COUNT}). 앞 그룹이 먼저 가져갔습니다.",
                   file=sys.stderr)
             continue
         out.append({

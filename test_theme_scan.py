@@ -22,7 +22,7 @@ def check(label, got, want):
 
 
 def stock(name, rate):
-    return {"name": name, "code": name, "rate": rate, "cap": 5000, "amount": 100}
+    return {"name": name, "code": name, "rate": rate, "cap": 5000, "amount": 50_000}
 
 
 def theme(name, stocks, members=None, up=None):
@@ -39,6 +39,15 @@ def group(keyword, themes):
     return {"keyword": keyword, "themes": themes}
 
 
+def filler(prefix, n, base=1.0):
+    """자리를 채우는 종목들. 배정 시험이 MIN_COUNT 에 걸리지 않게 한다.
+
+    등락률을 낮게 줘서 top5 의 앞자리를 차지하지 않는다 -- 시험이 보려는
+    것은 뺏고 뺏기는 순서이지 이 종목들이 아니다.
+    """
+    return [(f"{prefix}{i}", base - i * 0.01) for i in range(n)]
+
+
 def test_no_stock_lands_in_two_groups():
     """한 종목이 여러 테마에 속해도 슬롯은 한 번만 차지한다.
 
@@ -47,31 +56,32 @@ def test_no_stock_lands_in_two_groups():
     """
     shared = ("서진시스템", 8.77)
     out = ts.build_output([
-        group("A", [theme("t1", [("필옵틱스", 29.8), shared])]),
-        group("B", [theme("t2", [("두산퓨얼셀", 13.8), shared])]),
+        group("A", [theme("t1", [("필옵틱스", 29.8), shared] + filler("a", 3))]),
+        group("B", [theme("t2", [("두산퓨얼셀", 13.8), shared] + filler("b", 3))]),
     ])
     names = [[s["name"] for s in g["top5"]] for g in out]
-    check("A 가 먼저 가져감", names[0], ["필옵틱스", "서진시스템"])
-    check("B 는 남은 것만", names[1], ["두산퓨얼셀"])
+    check("A 가 먼저 가져감", names[0][:2], ["필옵틱스", "서진시스템"])
+    check("B 는 남은 것만", "서진시스템" in names[1], False)
+    check("B 도 자기 것으로 채움", names[1][0], "두산퓨얼셀")
 
 
 def test_claim_goes_to_the_group_that_led():
     """선점 순서는 시트 순서(최고 상승률 내림차순)를 따른다."""
     shared = ("공유주", 9.0)
     out = ts.build_output([
-        group("느린그룹", [theme("t1", [("보통주", 10.0), shared])]),
-        group("빠른그룹", [theme("t2", [("급등주", 30.0), shared])]),
+        group("느린그룹", [theme("t1", [("보통주", 10.0), shared] + filler("s", 3))]),
+        group("빠른그룹", [theme("t2", [("급등주", 30.0), shared] + filler("f", 3))]),
     ])
     check("빠른그룹이 위", [g["keyword"] for g in out], ["빠른그룹", "느린그룹"])
     check("공유주는 빠른그룹으로",
-          [s["name"] for s in out[0]["top5"]], ["급등주", "공유주"])
+          [s["name"] for s in out[0]["top5"]][:2], ["급등주", "공유주"])
 
 
 def test_group_backfills_after_losing_a_stock():
     """뺏긴 자리는 자기 풀의 다음 종목으로 채운다 — 4개로 끝내지 않는다."""
     shared = ("공유주", 20.0)
     out = ts.build_output([
-        group("선점", [theme("t1", [("일등", 30.0), shared])]),
+        group("선점", [theme("t1", [("일등", 30.0), shared] + filler("p", 3))]),
         group("후순위", [theme("t2", [
             ("a", 9.0), ("b", 8.0), ("c", 7.0), ("d", 6.0), ("e", 5.0), shared,
         ])]),
@@ -85,10 +95,38 @@ def test_group_with_nothing_left_is_dropped():
     """모든 종목을 뺏기면 빈 슬롯을 쓰지 않고 그룹째 빠진다."""
     only = ("유일주", 10.0)
     out = ts.build_output([
-        group("선점", [theme("t1", [("일등", 30.0), only])]),
+        group("선점", [theme("t1", [("일등", 30.0), only] + filler("p", 3))]),
         group("빈그룹", [theme("t2", [only])]),
     ])
     check("빈 그룹은 출력에 없음", [g["keyword"] for g in out], ["선점"])
+
+
+def test_group_below_min_count_after_claims_is_dropped():
+    """배정 뒤에 3종목이 안 되면 그룹째 뺀다.
+
+    MIN_COUNT 는 병합 전 테마마다 보는 값이라, 앞 그룹이 종목을 먼저 가져가면
+    그 밑으로 내려앉는다. 2026-09-16 에 철도·디스플레이폰부품·2차전지가 나란히
+    2종목으로 시트에 올라갔다 -- '조건 충족 3개 이상인 테마'라고 해 놓고
+    2개짜리 슬롯을 내보내면 그 말이 아니게 된다.
+    """
+    a, b = ("공유A", 20.0), ("공유B", 19.0)
+    out = ts.build_output([
+        group("선점", [theme("t1", [("일등", 30.0), a, b] + filler("p", 2))]),
+        group("굶은그룹", [theme("t2", [a, b, ("자기것", 5.0)])]),
+    ])
+    check("2종목짜리는 빠짐", [g["keyword"] for g in out], ["선점"])
+
+
+def test_dropped_group_gives_its_stocks_back():
+    """빠진 그룹이 잡고 있던 종목은 뒤 그룹이 다시 쓸 수 있어야 한다."""
+    shared = ("공유주", 25.0)
+    out = ts.build_output([
+        group("굶을그룹", [theme("t1", [shared, ("둘째", 24.0)])]),
+        group("뒤그룹", [theme("t2", [shared] + filler("z", 3, base=20.0))]),
+    ])
+    check("굶은 그룹은 빠짐", [g["keyword"] for g in out], ["뒤그룹"])
+    check("공유주가 뒤그룹으로 돌아감",
+          "공유주" in [s["name"] for s in out[0]["top5"]], True)
 
 
 def test_label_is_the_biggest_theme_not_the_shortest_name():
@@ -206,7 +244,7 @@ def test_scan_counts_participation_from_the_stocks_themselves():
         # 실제로는 다섯 중 셋만 3% 이상이다.
         rates = [9.0, 8.0, 7.0, 0.5, 0.2]
         return [{"name": f"종목{i}", "code": f"{i:06d}", "rate": r,
-                 "cap": 5000, "amount": 100} for i, r in enumerate(rates)]
+                 "cap": 5000, "amount": 50_000} for i, r in enumerate(rates)]
 
     real_list, real_stocks, real_sleep = (
         ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep)
@@ -231,7 +269,7 @@ def test_scan_fetches_every_theme_it_listed():
     def fake_stocks(no):
         asked.append(no)
         return [{"name": f"종목{i}", "code": f"{i:06d}", "rate": 9.0,
-                 "cap": 5000, "amount": 100} for i in range(3)]
+                 "cap": 5000, "amount": 50_000} for i in range(3)]
 
     real_list, real_stocks, real_sleep = (
         ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep)
