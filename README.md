@@ -1,25 +1,25 @@
 # naver-sheets-autofill
 
-Daily / Monthly Keyword Calendar 자동 입력을 **이 PC 밖에서** 돌리기 위한 리포.
-
-기존에는 작업 스케줄러 `NaverThemeDaily`(평일 20:10)가 헤드리스 `claude -p`를
-띄우고, 그 세션이 크롬으로 구글시트를 열어 클립보드로 붙여넣었다. 그래서
-**PC가 켜져 있어야만** 동작했고, 절전 중이면 작업이 PC를 깨웠다. 사용자가
-"컴퓨터는 절전으로 두고 싶다"고 해서 GitHub Actions + Sheets API로 옮긴다.
+Daily / Monthly Keyword Calendar 자동 입력. **GitHub Actions 에서만 돈다.**
 
 ## 지금 상태
 
-**아직 실행되지 않는다.** 코드는 끝났고 로직 검증도 끝났지만, 구글 인증이
-없어서 시트에 쓸 수 없다. 아래 "설정" 단계를 마쳐야 살아난다.
-그때까지는 **로컬 `NaverThemeDaily`(20:10)를 끄지 말 것** — 그게 유일한 경로다.
+평일 **20:20 KST** 에 자동으로 돈다. 사람이 켜 둘 것은 없다 — 시계도 실행도
+전부 GitHub 안에 있고, 구글 인증은 `GOOGLE_SERVICE_ACCOUNT_JSON` 시크릿으로
+들어가 있다.
 
-| | 상태 |
-|---|---|
-| 테마 스캔 (`theme_scan.py`) | 동작 확인 (로컬 8.4초, 17개 테마 → 8개 그룹) |
-| 지수 요약 (`market_summary.py`) | 기존 스크립트 그대로 |
-| 네트워크 (GitHub 러너 → 네이버) | 실측 확인 — `finance.naver.com` 4개 경로 전부 200 |
-| 행/열 계산 (`theme_write.py`) | `test_theme_write.py` 9건 통과 |
-| 구글 시트 쓰기 | **미검증 — 인증 필요** |
+```
+20:20  theme-calendar.yml   테마 스캔 → 두 시트 기록 → 카드 → 스레드 게시
+                            → theme_bot/feed/themes/ (아침 매수 후보 봇이 읽는다)
+20:20  supply-demand.yml    수급 기록 → theme_bot/feed/supply/
+21:10  (확정 전이면 재시도)
+22:10  (마지막. 여기서도 확정 전이면 빨갛게 남는다)
+```
+
+**로컬 PC 경로는 남아 있지 않다.** 예전에는 작업 스케줄러 `NaverThemeDaily`
+(평일 20:10)가 헤드리스 `claude -p` 를 띄우고 그 세션이 크롬으로 시트를 열어
+클립보드로 붙여넣었다. PC 가 켜져 있어야만 동작했고 절전 중이면 PC 를 깨웠다.
+그 PC 는 그래픽카드 고장으로 못 쓰게 됐고, 지금 경로는 그것과 무관하다.
 
 ## 설정 (사용자가 한 번만 하면 되는 부분)
 
@@ -67,7 +67,7 @@ test_feed_export.py 내보내기 규칙 검증 (인증 불필요)
 
 ## 아침 매수 후보 봇에 시트를 넘긴다 (`feed_export.py`)
 
-`volume-surge-telegram-bot/tradesignal` 은 07:30 KST 에 매수 후보를 고른다.
+`volume-surge-telegram-bot/tradesignal` 은 06:40 KST 에 매수 후보를 고른다.
 그 봇의 **테마·수급 신호는 이 시트에 적힌 것만** 센다.
 
 전에는 그쪽이 네이버 테마 목록 API 를 따로 읽었는데 문턱이 여기와 달랐다 —
@@ -221,8 +221,8 @@ https://graph.threads.net/v1.0/me?fields=id&access_token=...` 로 확인한다.
 보면 된다. `raw_scan.json` 은 **거르기 전**을 담으므로 무엇이 지워졌는지
 나중에도 확인할 수 있다.
 
-`keywords.json` 은 예전에 `C:\Users\USER\Desktop\클로드\키워드.json` 에 있던
-파일이다. 러너는 그 경로를 볼 수 없으므로 리포 안으로 옮겼다. 지금은 **매
+`keywords.json` 은 예전에 사용자 PC 의 바탕화면에 있던 파일이다. 러너는 그
+경로를 볼 수 없으므로 리포 안으로 옮겼다. 지금은 **매
 실행 `llm_group.py` 가 그날의 그룹으로 다시 쓰므로** 손으로 고쳐도 하루짜리다.
 오래 가야 하는 교정 — 이 테마는 이제 안 본다, 이 종목은 이 테마가 아니다 —
 은 `exclusions.json` 에 적는다 (GitHub 웹에서 바로 편집해도 되고, 로컬에서
