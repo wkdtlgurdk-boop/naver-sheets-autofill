@@ -45,8 +45,8 @@ MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 
 # Keyword override: any theme whose name matches (substring) one of these
 # patterns gets folded into the given keyword group, taking priority over
-# the automatic overlap-based merge. Edit this list (or point KEYWORD_FILE
-# at C:\Users\USER\Desktop\클로드\키워드.json) to steer future runs.
+# the automatic overlap-based merge. Edit this list, or keywords.json next to
+# it, to steer future runs.
 KEYWORD_PATTERNS = {
     "바이오": [
         "코로나19", "백신", "진단시약", "방역", "바이오시밀러", "제약업체",
@@ -59,7 +59,7 @@ KEYWORD_PATTERNS = {
 }
 
 # User-editable source of truth, kept in this repo as keywords.json. It used
-# to live on the user Desktop, which a GitHub runner cannot see. Each entry
+# to live on the user's desktop PC, which a GitHub runner cannot see. Each entry
 # "source_themes" (exact theme names from a past run) are folded in as
 # exact-match patterns on top of the substring patterns above, so edits are
 # picked up on the next run. Edit it on GitHub, or locally and push.
