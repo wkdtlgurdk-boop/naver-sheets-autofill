@@ -1,30 +1,25 @@
 name: theme-calendar-autofill
 
 on:
+  # 시계는 Apps Script 에 있다 (industry-report-telegram-bot/appsscript/dispatch.gs
+  # 의 dispatchThemeCalendar, 평일 20:10 KST). 아래 cron 은 그게 안 뜬 날을
+  # 위한 **백업**이다.
+  #
+  # 왜 옮겼나: 2026-09-18 예약 실행이 3시간 34분 늦어 23:54 에 시작하고 00:01 에
+  # 끝났다. 저녁 시황을 자정 넘어 올리는 것은 그것대로 쓸모가 없고, 실행이
+  # 자정을 걸치면서 시트에는 9/18 이 카드와 스레드에는 9/19 가 찍혔다.
+  # 같은 계정의 산업리포트는 Apps Script 로 옮긴 뒤 닷새 내리 5초 안쪽으로 떴다.
+  #
+  # 두 시계가 같은 날 다 뜨면 뒤엣것이 스레드 게시 직전에 멈춘다
+  # (post_threads.already_posted 가 그날 글을 찾는다). 시트와 카드는 다시
+  # 쓰이지만 같은 거래일 같은 자료라 결과가 같다.
+  #
+  # 12:10 UTC = 21:10 KST. Apps Script 목표(20:10)보다 한 시간 뒤라, 그쪽이
+  # 제때 떴으면 이 실행은 할 일이 없다. 정각(:00)은 이 계정에서 지연이 제일
+  # 심한 자리라 피한다 -- 형제 저장소의 "0 8" 이 113~141분 늦은 전력이 있다.
   schedule:
-    # 20:20 KST 도착을 노린다 (11:10 UTC + 평소 지연 5~13분).
-    #
-    # 16:00 이었다. 그때는 장이 15:30 에 끝났고 지표도 15:31~15:33 에 자리를
-    # 잡았다(2026-09-07 실측). 그런데 KRX 가 거래시간을 20:00 까지 늘리면서 그
-    # 전제가 죽었다 — 16:00 스캔은 종가가 아니라 **장중 시세**를 읽어 그것을
-    # 그날의 종가로 시트에 적고 있었다. 카드도 스레드도 아침 매수 후보 봇도
-    # 전부 그 숫자를 물려받는다.
-    #
-    # 11:10 UTC 이지 11:20 도 12:00 도 아니다. 이 저장소의 예약 실행은 5~13분
-    # 늦게 시작하므로(2026-09-07 실측: 5분 08초, 12분 45초) :10 이면
-    # 20:15~20:23 에 도착한다. 정각은 그 지연이 제일 심한 자리라 피한다 --
-    # 형제 저장소의 "0 8" 실행이 113~141분 늦고 하루는 통째로 건너뛴 전력이
-    # 있다. **절대 :00 으로 옮기지 말 것.**
-    #
-    # 수급(supply-demand.yml)은 같은 20:20 부터 세 번 시도한다. 그쪽은 외국인·
-    # 기관 확정치를 기다려야 해서 늦고, 이쪽은 가격·거래량만 보므로 마감 직후면
-    # 충분하다. 두 워크플로는 concurrency 그룹이 달라 서로 막지 않는다.
-    #
-    # 2026-09-17 에 GitHub 스케줄러가 이 저장소의 아침 실행을 통째로 건너뛰었다
-    # (8/28 에도 같은 일이 있었다). 누락이 반복되면 industry-report-telegram-bot
-    # /appsscript/dispatch.gs 처럼 Apps Script 타이머에서 workflow_dispatch 를
-    # 때리는 쪽으로 옮긴다.
-    - cron: "10 11 * * 1-5"
+    - cron: "10 12 * * 1-5"
+
   workflow_dispatch:
     inputs:
       skip_sheet:
@@ -71,6 +66,26 @@ jobs:
 
       - run: pip install -r requirements.txt
 
+      # 대상일을 여기서 한 번 정하고 THEME_DAY 에 박는다. 그다음 단계들은
+      # 시계를 다시 보지 않는다.
+      #
+      # 2026-09-18 에 이 실행이 3시간 34분 늦어 23:54 에 시작하고 00:01 에
+      # 끝났다. 스캔과 시트는 금요일 23:5x 에 돌아 9/18 을 봤고, 카드와
+      # 스레드는 토요일 00:0x 에 돌아 9/19 를 봤다 -- 시트에는 9/18 이,
+      # 카드에는 9/19 가 찍혀 그대로 스레드에 올라갔다. 실행이 길어지거나
+      # 늦어질수록 갈라질 확률만 커지는 구조였다.
+      #
+      # as_of 의 거래일 규칙도 같이 고쳤지만(주말은 금요일까지 물러난다),
+      # 20:00 경계를 걸치는 실행은 규칙만으로는 막지 못한다. 답을 한 번만
+      # 계산하는 것이 근본이다.
+      - name: 대상일 고정
+        env:
+          THEME_AS_OF: ${{ inputs.as_of }}
+        run: |
+          day=$(python as_of.py)
+          echo "THEME_DAY=$day" >> "$GITHUB_ENV"
+          echo "대상일 $day (현재 $(TZ=Asia/Seoul date '+%F %H:%M') KST)"
+
       # The grouping and exclusion rules fail quietly when they fail -- a theme
       # that was filtered out looks the same as a theme that did not move. 20
       # seconds here beats reading it off the sheet a day later.
@@ -78,6 +93,7 @@ jobs:
         run: |
           python test_theme_scan.py
           python test_llm_group.py
+          python test_as_of.py
           python test_theme_write.py
           python test_groups_from_sheet.py
           python test_feed_export.py
@@ -232,9 +248,11 @@ jobs:
             exit 0
           fi
           # 카드 폴더 이름은 '오늘'이 아니라 이 글이 다루는 거래일이다.
-          # cards.py 가 THEME_AS_OF 로 폴더를 만들었으므로 여기도 같이 따라가야
-          # 한다 -- 안 그러면 있지도 않은 폴더를 찾아 cp 가 죽는다.
-          day=$(TZ=Asia/Seoul date -d "${THEME_AS_OF:-today}" +%Y%m%d)
+          # 앞에서 박아 둔 THEME_DAY 를 쓴다 -- 여기서 `date +%Y%m%d` 로 다시
+          # 세던 것이 9/18 사고의 마지막 조각이었다. 00:00:42 에 이 줄이
+          # 돌면서 9/19 폴더를 찾았고, cards.py 도 같은 시각에 9/19 로
+          # 만들었기 때문에 cp 는 죽지 않고 조용히 틀린 날짜가 올라갔다.
+          day=$(echo "${THEME_DAY}" | tr -d '-')
           git clone --depth 1 \
             "https://x-access-token:${CARD_REPO_TOKEN}@github.com/wkdtlgurdk-boop/theme_bot.git" /tmp/theme_bot
           mkdir -p /tmp/theme_bot/cards /tmp/theme_bot/feed
