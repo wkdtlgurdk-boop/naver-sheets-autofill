@@ -95,6 +95,30 @@ def call(path: str, params: dict) -> dict:
         raise RuntimeError(f"{e.code} {path}: {body}") from None
 
 
+def already_posted(user_id: str, token: str, now: datetime) -> str | None:
+    """오늘 글이 이미 올라가 있으면 그 글의 id. 없으면 None.
+
+    본문 첫 줄이 '멍! 2026년 9월 18일 시황정리...' 라 날짜가 그대로 표식이
+    된다. 따로 상태 파일을 두지 않는 이유다 -- 스레드에 올라간 글 자체가
+    가장 믿을 만한 기록이고, 러너가 바뀌어도 캐시가 지워져도 남아 있다.
+
+    확인에 실패하면 막지 않는다. 한 번 더 올라가는 것보다 그날 글이 통째로
+    빠지는 쪽이 나쁘다 -- 다만 조용히 넘어가지는 않는다.
+    """
+    try:
+        doc = get(f"{user_id}/threads",
+                  {"fields": "id,text", "limit": 25, "access_token": token})
+    except Exception as exc:
+        print(f"[threads] 기존 글 확인 실패 — 그대로 올립니다 ({exc})", file=sys.stderr)
+        return None
+    mark = caption_date(now)
+    for post in doc.get("data") or []:
+        first = (post.get("text") or "").split("\n", 1)[0]
+        if mark in first:
+            return post.get("id")
+    return None
+
+
 def raw_url(path: Path, day: str) -> str:
     return (f"https://raw.githubusercontent.com/{CARD_REPO}/{CARD_BRANCH}"
             f"/cards/{day}/{urllib.parse.quote(path.name)}")
@@ -144,6 +168,13 @@ def main() -> int:
         return 0
     if overridden:
         print(f"[threads] THEME_AS_OF={now:%Y-%m-%d} 기준으로 올립니다.", file=sys.stderr)
+    # 같은 날 두 번 올리지 않는다. 시계가 둘이기 때문이다 -- Apps Script 가
+    # 20:10 에 띄우고, 그게 안 뜬 날을 위해 GitHub cron 이 21:10 에 한 번 더
+    # 돈다. 둘 다 뜬 날에는 뒤엣것이 여기서 멈춘다.
+    posted_id = already_posted(user_id, token, now)
+    if posted_id:
+        return give_up(f"{caption_date(now)} 글이 이미 올라가 있습니다 ({posted_id})")
+
     day = f"{now:%Y%m%d}"
     card_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
     paths = sorted((card_dir / day).glob("*.png"))
