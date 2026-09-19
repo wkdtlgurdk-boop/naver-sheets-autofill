@@ -1,0 +1,35 @@
+name: token-check
+
+# 예약 실행 없음. 토큰을 새로 넣은 사람이 손으로 눌러 보는 자리다.
+#
+# theme-calendar 로는 토큰을 시험할 수 없다. 묶기가 거부되면 규칙 기반으로
+# 조용히 물러나 초록불이 뜨고, 확인하자고 돌리면 네이버 스캔 3분 반에 시트와
+# 스레드까지 건드린다. 여기서는 물러설 곳을 두지 않는다 -- 거부되면 빨갛게 뜬다.
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm install -g @anthropic-ai/claude-code
+
+      # requirements.txt 를 깔지 않는다. token_check 가 llm_group 에서 가져오는
+      # 것은 MODEL 과 explain() 뿐이고, 그 경로(llm_group -> theme_scan)는
+      # 표준 라이브러리만 탄다 -- 진단이 본 작업의 의존성 때문에 못 도는 일이
+      # 없어야 한다.
+      - name: 구독 토큰 확인
+        run: python token_check.py
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
