@@ -182,6 +182,34 @@ def cli_available() -> str | None:
     return None
 
 
+def explain(stderr: str, stdout: str) -> str:
+    """CLI 가 실패했을 때 사람이 읽을 한 줄.
+
+    CLI 는 --output-format json 이면 실패해도 JSON 봉투를 stdout 으로 뱉는다.
+    그 봉투 앞쪽은 duration_api_ms, session_id, usage 처럼 고장 원인과 무관한
+    필드라, 통째로 잘라 찍으면 정작 사유가 담긴 result/subtype 이 뒤에 밀려
+    안 보인다. 2026-09-18~19 에 이것 때문에 "종료코드 1, 토큰 0" 만 사흘을
+    들여다봤다 -- 무엇이 거부됐는지는 끝내 못 봤다.
+
+    그래서 봉투를 열어 사유 필드부터 찍는다. JSON 이 아니면 있는 그대로.
+    """
+    raw = (stderr or "").strip() or (stdout or "").strip()
+    if not raw:
+        return "(출력 없음)"
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        return raw[:400]
+    bits = []
+    for key in ("subtype", "result", "error", "message"):
+        value = doc.get(key)
+        if isinstance(value, str) and value.strip():
+            bits.append(f"{key}={value.strip()[:240]}")
+    if doc.get("is_error") is not None:
+        bits.insert(0, f"is_error={doc['is_error']}")
+    return " / ".join(bits) if bits else raw[:400]
+
+
 def run_claude(prompt: str) -> str | None:
     """CLI 한 번. 본문 텍스트를 돌려주고, 실패하면 None.
 
@@ -206,9 +234,8 @@ def run_claude(prompt: str) -> str | None:
         print(f"[llm_group] {TIMEOUT_SEC}초 안에 끝나지 않았습니다.", file=sys.stderr)
         return None
     if proc.returncode != 0:
-        # 인증 실패는 stderr 가 비고 stdout 으로만 나온 적이 있다. 둘 다 본다.
-        detail = (proc.stderr.strip() or proc.stdout.strip() or "(출력 없음)")[:400]
-        print(f"[llm_group] claude 종료코드 {proc.returncode}: {detail}", file=sys.stderr)
+        print(f"[llm_group] claude 종료코드 {proc.returncode}: "
+              f"{explain(proc.stderr, proc.stdout)}", file=sys.stderr)
         return None
     try:
         envelope = json.loads(proc.stdout)
