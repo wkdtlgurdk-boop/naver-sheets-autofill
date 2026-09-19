@@ -63,9 +63,80 @@ permissions:
   contents: write
 
 jobs:
+  # 대상일을 정하고, 그 날 일이 이미 끝났으면 여기서 멈춘다.
+  #
+  # 대상일을 한 번만 계산하는 이유: 2026-09-18 에 실행이 3시간 34분 늦어
+  # 23:54 에 시작하고 00:01 에 끝났다. 스캔과 시트는 금요일 23:5x 에 돌아
+  # 9/18 을, 카드와 스레드는 토요일 00:0x 에 돌아 9/19 를 봤다. as_of 의
+  # 거래일 규칙도 같이 고쳤지만(주말은 금요일까지 물러난다), 20:00 경계를
+  # 걸치는 실행은 규칙만으로는 못 막는다. 답을 한 번 내고 물려주는 것이
+  # 근본이다.
+  #
+  # 중복을 막는 이유: cron 이 세 번(20:20/21:10/22:10) 뜨는데, 1차가
+  # 성공해도 2·3차가 전체 파이프라인을 다시 돌고 있었다. 회당 4분 30초에
+  # 클로드 호출 1회씩이라 하루에 스캔 3회·호출 3회를 쓴다. 앞 회차가
+  # 끝냈으면 뒤 회차는 할 일이 없다.
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      day: ${{ steps.pin.outputs.day }}
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # as_of 는 표준 라이브러리만 쓴다. 여기서 pip install 을 돌리지 않는
+      # 이유다 -- 건너뛸 회차에 20초를 쓸 이유가 없다.
+      - name: 대상일 고정
+        id: pin
+        env:
+          THEME_AS_OF: ${{ inputs.as_of }}
+        run: |
+          day=$(python as_of.py)
+          echo "day=$day" >> "$GITHUB_OUTPUT"
+          echo "대상일 $day (현재 $(TZ=Asia/Seoul date '+%F %H:%M') KST)"
+
+      # 피드는 파이프라인 맨 끝(카드 게시 단계)에 쓰인다. 그게 있다는 것은
+      # 그날 실행이 끝까지 갔다는 뜻이다. 시트를 보면 더 정확하겠지만 구글
+      # 인증이 필요하고, 여기서는 공개 URL 하나로 충분하다.
+      #
+      # 실패하면 돈다(fail-open). 404 든 네트워크 오류든 curl 은 똑같이
+      # 비영으로 끝나는데, 둘을 가르자고 그날 실행을 통째로 잃을 수는 없다.
+      - name: 이미 끝난 날인지 본다
+        id: check
+        env:
+          DAY: ${{ steps.pin.outputs.day }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != "schedule" ]; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+            echo "수동 실행 — 중복 검사를 건너뛴다"
+            exit 0
+          fi
+          key=$(echo "$DAY" | tr -d '-')
+          url="https://raw.githubusercontent.com/wkdtlgurdk-boop/theme_bot/main/feed/themes/${key}.json"
+          if curl -fsS --max-time 20 -o /dev/null "$url"; then
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "$key 피드가 이미 있다 — 앞 회차가 끝냈으므로 여기서 멈춘다."
+          else
+            echo "run=1" >> "$GITHUB_OUTPUT"
+            echo "$key 피드가 아직 없다 — 진행한다."
+          fi
+
   fill:
+    needs: guard
+    if: needs.guard.outputs.run == '1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # guard 가 정한 대상일을 모든 단계가 물려받는다. 아무도 시계를 다시
+    # 보지 않는다. THEME_AS_OF(사람이 지목한 날짜)는 as_of 안에서 이것을
+    # 이기므로, 되살리는 실행은 그대로 동작한다.
+    env:
+      THEME_DAY: ${{ needs.guard.outputs.day }}
     steps:
       - uses: actions/checkout@v4
 
@@ -75,26 +146,6 @@ jobs:
           cache: pip
 
       - run: pip install -r requirements.txt
-
-      # 대상일을 여기서 한 번 정하고 THEME_DAY 에 박는다. 그다음 단계들은
-      # 시계를 다시 보지 않는다.
-      #
-      # 2026-09-18 에 이 실행이 3시간 34분 늦어 23:54 에 시작하고 00:01 에
-      # 끝났다. 스캔과 시트는 금요일 23:5x 에 돌아 9/18 을 봤고, 카드와
-      # 스레드는 토요일 00:0x 에 돌아 9/19 를 봤다 -- 시트에는 9/18 이,
-      # 카드에는 9/19 가 찍혀 그대로 스레드에 올라갔다. 실행이 길어지거나
-      # 늦어질수록 갈라질 확률만 커지는 구조였다.
-      #
-      # as_of 의 거래일 규칙도 같이 고쳤지만(주말은 금요일까지 물러난다),
-      # 20:00 경계를 걸치는 실행은 규칙만으로는 막지 못한다. 답을 한 번만
-      # 계산하는 것이 근본이다.
-      - name: 대상일 고정
-        env:
-          THEME_AS_OF: ${{ inputs.as_of }}
-        run: |
-          day=$(python as_of.py)
-          echo "THEME_DAY=$day" >> "$GITHUB_ENV"
-          echo "대상일 $day (현재 $(TZ=Asia/Seoul date '+%F %H:%M') KST)"
 
       # The grouping and exclusion rules fail quietly when they fail -- a theme
       # that was filtered out looks the same as a theme that did not move. 20
