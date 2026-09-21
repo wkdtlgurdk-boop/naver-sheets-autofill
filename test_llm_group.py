@@ -187,6 +187,75 @@ def test_a_couple_of_stale_proposals_pass():
     check("두 건 통과", [s["theme"] for s in stale], ["t0", "t1"])
 
 
+def test_성공_경로가_끝까지_돈다():
+    """main() 을 성공 경로로 통째로 태운다.
+
+    이것이 없어서 llm_group.py 가 2026-09-21 에 터졌다. main() 맨 끝에 SDK
+    시절의 `resp.usage` 가 남아 있었는데, 실패하면 give_up() 으로 먼저 빠져
+    나가므로 그 줄에 닿지 않았다. CLI 호출이 사흘 만에 처음 성공한 날 비로소
+    NameError 가 났고, 그룹핑은 다 끝난 뒤라 keywords.json 은 갱신됐는데
+    종료코드 1 이 워크플로를 넘어뜨려 카드와 피드가 통째로 안 나갔다.
+
+    즉 '잘 됐을 때만 터지는' 버그였다. 실패 경로만 시험하면 영영 안 잡힌다.
+    """
+    d = Path(tempfile.mkdtemp())
+    raw = d / "raw_scan.json"
+    raw.write_text(json.dumps([
+        theme("반도체 장비", ["가", "나", "다"]),
+        theme("로봇", ["라", "마", "바"]),
+    ], ensure_ascii=False), encoding="utf-8")
+
+    answer = {
+        "groups": [
+            {"keyword": "반도체", "source_themes": ["반도체 장비"],
+             "reason": "장비 한 갈래"},
+            {"keyword": "로봇", "source_themes": ["로봇"], "reason": "단독"},
+        ],
+        "stale_themes": [],
+        "misfit_stocks": [],
+    }
+
+    saved = (lg.RAW, lg.KEYWORDS, lg.EXCLUSIONS, lg.cli_available, lg.run_claude)
+    try:
+        lg.RAW = raw
+        lg.KEYWORDS = d / "keywords.json"
+        lg.KEYWORDS.write_text("[]\n", encoding="utf-8")
+        lg.EXCLUSIONS = with_file({"themes": [], "stocks": []})
+        lg.cli_available = lambda: None
+        lg.run_claude = lambda prompt: json.dumps(answer, ensure_ascii=False)
+        code = lg.main()
+    finally:
+        (lg.RAW, lg.KEYWORDS, lg.EXCLUSIONS,
+         lg.cli_available, lg.run_claude) = saved
+        written = json.loads((d / "keywords.json").read_text(encoding="utf-8"))
+
+    check("종료코드", code, 0)
+    check("그룹 수", len(written), 2)
+
+
+def test_usage_가_없어도_죽지_않는다():
+    """봉투에 usage 가 없어도 호출은 성공으로 끝나야 한다.
+
+    사용량 출력은 관측용이다. 그 한 줄 때문에 그룹핑 결과를 통째로 버리는
+    일이 다시 없어야 한다.
+    """
+    import subprocess as sp
+
+    class FakeProc:
+        returncode = 0
+        stderr = ""
+        stdout = json.dumps({"subtype": "success", "result": "본문"})
+
+    real_run = sp.run
+    try:
+        sp.run = lambda *a, **k: FakeProc()
+        got = lg.run_claude("프롬프트")
+    finally:
+        sp.run = real_run
+    check("usage 없어도 본문을 준다", got, "본문")
+
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
