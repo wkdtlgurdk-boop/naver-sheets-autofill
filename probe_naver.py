@@ -1,129 +1,75 @@
-"""네이버가 테마 목록을 어디로 옮겼는지 러너가 대신 찾아본다.
+#!/usr/bin/env python3
+"""일회용 진단. 수급 API 응답에 무엇이 들어 있는지 러너가 찍어 본다.
 
-2026-09-11, finance.naver.com 의 테마 페이지가 Next.js 기반 새 화면으로 바뀌면서
-옛 HTML 에서 테마 링크를 뽑던 방식이 통하지 않게 됐다. 이 세션에서는 네이버에
-직접 붙을 수 없으므로(프록시 차단) 러너가 찔러보고 결과만 로그로 남긴다.
+supply_demand.py 는 sections.buyRankList(순매수 상위 20종목)만 읽는다. sections
+가 복수형이라 그 옆에 시장 전체 순매수액이 같이 올 수 있는데, 확인한 적이 없다.
 
-일회용 진단 도구다. 새 경로를 찾아 theme_scan.py 를 옮기고 나면 지워도 된다.
+필요한 이유: 아침 알림의 수급 블록이 '상위 20종목 합계'라서 부호가 없다.
+상위에서 빠진 것이 판 것인지 21등이 된 것인지 구분할 수 없어 '3일 매도 후
+매수 전환' 같은 말을 못 쓴다. 시장 전체 순매수액은 부호가 있으므로 그 말을
+쓸 수 있다 -- 그 값이 이 응답 안에 있는지가 이 파일이 묻는 전부다.
+
+값은 안 찍는다. 키 이름과 자료형, 숫자 하나 정도만 본다.
 """
+from __future__ import annotations
+
 import json
-import re
-import sys
-import urllib.error
+import urllib.parse
 import urllib.request
 
+BASE = "https://stock.naver.com/api/domestic/market/trend/trendForeignOrg"
 HEADERS = {
-    "Accept": "application/json, text/plain, */*",
     "Referer": "https://stock.naver.com/",
-    "User-Agent": "Mozilla/5.0 naverstock-web-api-skill/1.0",
+    "User-Agent": "Mozilla/5.0 supply-demand-autofill/4.0",
 }
 
-CANDIDATES = [
-    # 1차에서 살아 있는 것으로 확인된 테마 목록. 페이지 파라미터를 찾는다.
-    "https://m.stock.naver.com/api/stocks/theme",
-    "https://m.stock.naver.com/api/stocks/theme?page=2",
-    "https://m.stock.naver.com/api/stocks/theme?page=1&pageSize=100",
-    "https://m.stock.naver.com/api/stocks/theme?size=100",
-    # 테마 하나(405 = MLCC)의 구성 종목을 어디서 주는지
-    "https://m.stock.naver.com/api/stocks/theme/405",
-    "https://m.stock.naver.com/api/stocks/theme/405/stocks",
-    "https://m.stock.naver.com/api/stocks/theme/405/item",
-    "https://m.stock.naver.com/api/stocks/theme/405/price",
-    "https://m.stock.naver.com/api/stocks/theme/405?page=1&pageSize=100",
-    # 지수: 거래대금과 외인 순매수가 어디에 있는지
-    "https://m.stock.naver.com/api/index/KOSPI/basic",
-    "https://m.stock.naver.com/api/index/KOSPI/price?pageSize=1&page=1",
-    "https://m.stock.naver.com/api/index/KOSPI/investorTrend",
-    "https://m.stock.naver.com/api/index/KOSPI/trend",
-]
+
+def skeleton(node, depth: int = 0, limit: int = 3) -> str:
+    """중첩 구조를 키와 자료형만으로 펼친다. 목록은 첫 원소만 본다."""
+    pad = "  " * depth
+    if isinstance(node, dict):
+        out = []
+        for key, value in node.items():
+            if isinstance(value, (dict, list)):
+                out.append(f"{pad}{key}:")
+                out.append(skeleton(value, depth + 1, limit))
+            else:
+                out.append(f"{pad}{key} = {value!r}"[:120])
+        return "\n".join(out)
+    if isinstance(node, list):
+        if not node:
+            return f"{pad}[] (빈 목록)"
+        return f"{pad}[{len(node)}개] 첫 원소:\n" + skeleton(node[0], depth + 1, limit)
+    return f"{pad}{node!r}"[:120]
 
 
+def main() -> int:
+    qs = urllib.parse.urlencode({
+        "investorType": "FOREIGNER", "tradeType": "KRX",
+        "marketType": "KOSPI", "startIdx": 0, "pageSize": 20, "periodType": "DAY",
+    })
+    req = urllib.request.Request(f"{BASE}?{qs}", headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        doc = json.load(resp)
 
-def get(url, timeout=15):
-    req = urllib.request.Request(url, headers=HEADERS)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.status, resp.read()
+    print("=== 최상위 키 ===")
+    print(", ".join(doc.keys()))
+    sections = doc.get("sections") or {}
+    print("\n=== sections 키 ===")
+    for key, value in sections.items():
+        kind = type(value).__name__
+        size = f"[{len(value)}]" if isinstance(value, (list, dict)) else ""
+        print(f"  {key}: {kind}{size}")
 
+    print("\n=== buyRankList 를 뺀 나머지 ===")
+    rest = {k: v for k, v in sections.items() if k != "buyRankList"}
+    print(skeleton(rest) if rest else "  (없음 -- 상위 목록이 전부다)")
 
-def show(url):
-    try:
-        status, raw = get(url)
-    except urllib.error.HTTPError as e:
-        print(f"  {status_mark(e.code)} {e.code}  {url}")
-        return None
-    except Exception as e:  # noqa: BLE001
-        print(f"  ✗  ERR  {url}  ({type(e).__name__}: {e})")
-        return None
-    body = raw.decode("utf-8", errors="replace")
-    head = re.sub(r"\s+", " ", body[:900])
-    print(f"  ✓  {status} {len(raw):>8,}B  {url}")
-    print(f"        {head}")
-    return body
-
-
-def status_mark(code):
-    return "✓" if code < 400 else "✗"
-
-
-def main():
-    """문턱 후보별로 금요일 종가에 무엇이 잡혔을지 센다. 고르기 위한 재료다."""
-    import json as _json
-
-    def n(v):
-        if v in (None, "", "N/A", "-"):
-            return None
-        try:
-            return float(str(v).replace(",", "").replace("+", ""))
-        except ValueError:
-            return None
-
-    # (이름, 규칙) — 규칙은 (상승률, 시총) 쌍의 목록이고 하나라도 맞으면 통과
-    RULES = {
-        "현재":            [(5.0, 2000), (20.0, 500)],
-        "+10%/1,000억 추가": [(5.0, 2000), (10.0, 1000), (20.0, 500)],
-        "+15%/1,000억 추가": [(5.0, 2000), (15.0, 1000), (20.0, 500)],
-        "+10%/1,500억 추가": [(5.0, 2000), (10.0, 1500), (20.0, 500)],
-    }
-    MIN_COUNT, MIN_PART, PART_RATE = 3, 0.2, 3.0
-
-    groups, seen = [], set()
-    for page in range(1, 4):
-        _, raw = get(f"https://m.stock.naver.com/api/stocks/theme?page={page}&pageSize=100")
-        gs = [g for g in _json.loads(raw.decode())["groups"] if g["no"] not in seen]
-        if not gs:
-            break
-        for g in gs:
-            seen.add(g["no"])
-        groups += gs
-    print(f"테마 {len(groups)}개 조회")
-
-    detail = {}
-    for g in groups:
-        _, raw = get(f"https://m.stock.naver.com/api/stocks/theme/{g['no']}?page=1&pageSize=100")
-        rows = []
-        for st in _json.loads(raw.decode()).get("stocks") or []:
-            rate, cap = n(st.get("fluctuationsRatio")), n(st.get("marketValue"))
-            if None not in (rate, cap):
-                rows.append((st.get("stockName"), rate, cap))
-        detail[g["no"]] = rows
-
-    for label, rule in RULES.items():
-        hits = []
-        for g in groups:
-            rows = detail[g["no"]]
-            if not rows:
-                continue
-            ups = sum(1 for _, r, _c in rows if r >= PART_RATE)
-            if ups / len(rows) < MIN_PART:
-                continue
-            q = [nm for nm, r, c in rows if any(r >= mr and c >= mc for mr, mc in rule)]
-            if len(q) >= MIN_COUNT:
-                hits.append((g["name"], len(q)))
-        names = ", ".join(f"{nm}({c})" for nm, c in hits)
-        print(f"\n[{label}] 테마 {len(hits)}개")
-        print(f"   {names}")
+    print("\n=== buyRankList 첫 원소 ===")
+    rows = sections.get("buyRankList") or []
+    print(skeleton(rows[0]) if rows else "  (비어 있음)")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
