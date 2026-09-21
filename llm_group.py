@@ -246,6 +246,12 @@ def run_claude(prompt: str) -> str | None:
     if envelope.get("is_error") or envelope.get("subtype") != "success":
         print(f"[llm_group] 호출 실패: subtype={envelope.get('subtype')}", file=sys.stderr)
         return None
+    # 사용량은 봉투에 들어 있다. 여기서 찍는다 -- 이 값이 손에 있는 자리가
+    # 여기뿐이고, 호출부로 들고 나가면 또 없는 변수를 참조하게 된다.
+    # get 으로 읽는 이유: 없는 필드 때문에 죽을 값이 아니다. 관측용일 뿐이다.
+    usage = envelope.get("usage") or {}
+    print(f"[llm_group] usage: in={usage.get('input_tokens', '?')} "
+          f"out={usage.get('output_tokens', '?')}", file=sys.stderr)
     return envelope.get("result")
 
 
@@ -533,8 +539,6 @@ def main() -> int:
               f"{item['reason']}", file=sys.stderr)
     added = record_exclusions(stale, misfits, datetime.now(KST).strftime("%Y-%m-%d"))
     print(f"[llm_group] exclusions.json 에 {added}건 추가", file=sys.stderr)
-    print(f"[llm_group] usage: in={resp.usage.input_tokens} "
-          f"out={resp.usage.output_tokens}", file=sys.stderr)
     return 0
 
 
