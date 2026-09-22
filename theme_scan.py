@@ -425,6 +425,11 @@ def scan_themes():
                 # 는 '조금이라도 오른' 종목이라 너무 관대하다 — 2026-09-11 실측
                 # 으로 266개 중 225개(85%)가 통과해 거르는 구실을 못 했다.
                 "member_count": len(stocks),
+                # 구성종목 전체. qualifying 은 '오늘 시트에 오를 만큼 오른' 것만
+                # 남기는데, 같은 테마에 속하면서 그날 덜 오른 종목이 따로 다른
+                # 신호(수급·거래량·임원매수)에 걸리는 일이 있다. 그때 '이 종목이
+                # 오늘 뜬 테마 소속인가'를 물으려면 명단이 있어야 한다.
+                "members": stocks,
                 "up_count": sum(1 for s in stocks
                                 if s["rate"] >= PARTICIPATION_RATE),
                 "avg_rate": num(t.get("changeRate")),
@@ -531,15 +536,21 @@ def build_output(final_groups):
     pools = []
     for g in final_groups:
         stock_map = {}
+        member_map = {}
         source_names = []
         for t in g["themes"]:
             source_names.append(t["theme_name"])
             for s in t["qualifying"]:
                 stock_map[s["code"]] = s
+            # 병합된 테마들의 구성종목은 합집합으로 둔다. 겹쳐서 하나로 묶인
+            # 테마라면 어느 쪽 소속이든 같은 키워드 아래 있는 것이 맞다.
+            for s in t.get("members") or []:
+                member_map[s["code"]] = s
         pools.append({
             "keyword": g["keyword"],
             "source_themes": sorted(set(source_names)),
             "total_qualifying": len(stock_map),
+            "members": sorted(member_map.values(), key=lambda s: -s["rate"]),
             "ranked": sorted(stock_map.values(), key=lambda s: -s["rate"]),
         })
 
@@ -570,6 +581,11 @@ def build_output(final_groups):
             "keyword": p["keyword"],
             "source_themes": p["source_themes"],
             "total_qualifying": p["total_qualifying"],
+            # top5 는 시트에 오르는 대장주, members 는 테마 소속 전체다.
+            # 둘을 갈라 두는 이유: 시트는 사람이 읽는 표라 다섯 줄이면 족하고,
+            # 봇은 '소속인가'를 물어야 해서 전부가 필요하다.
+            "members": [{"name": s["name"], "code": s["code"], "rate": s["rate"]}
+                        for s in p["members"]],
             "top5": top5,
         })
     return out

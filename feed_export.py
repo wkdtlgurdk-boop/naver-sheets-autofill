@@ -137,8 +137,38 @@ def codes_from_scan(raw_scan: list[dict], groups: list[dict]) -> dict[str, str]:
 
 # ---------------------------------------------------------------- 테마 피드
 
+def members_by_keyword(final_groups: list[dict] | None) -> dict[str, list[dict]]:
+    """final_groups.json -> {키워드: [구성종목...]}.
+
+    시트에는 대장주 다섯만 오르므로 소속 명단은 시트를 되읽어서는 알 수 없다.
+    같은 실행이 남긴 final_groups.json 에서 가져온다 -- 스캔이 이미 받아 둔
+    것이고, 여기서 다시 네이버를 두드릴 이유가 없다.
+
+    그날 스캔이 없는 실행(시트에서 복원하거나 지난 날짜를 다시 내보내는 경우)
+    에는 파일이 없거나 비어 있다. 그때는 소속 없이 내보낸다 -- 받는 쪽이
+    '소속을 모르는 날'로 읽고 그 판정만 끈다.
+    """
+    out: dict[str, list[dict]] = {}
+    for g in final_groups or []:
+        keyword = str(g.get("keyword") or "").strip()
+        members = g.get("members") or []
+        if not keyword or not members:
+            continue
+        seen = {}
+        for s in members:
+            code = str(s.get("code") or "").strip()
+            if not code:
+                continue
+            seen[code.zfill(6)] = {"name": str(s.get("name") or "").strip(),
+                                   "code": code.zfill(6), "rate": s.get("rate")}
+        if seen:
+            out[keyword] = list(seen.values())
+    return out
+
+
 def themes_feed(groups: list[dict], code_map: dict[str, str], day: str,
-                label: str, generated_at: str) -> dict:
+                label: str, generated_at: str,
+                members: dict[str, list[dict]] | None = None) -> dict:
     """시트 블록 -> 봇이 읽는 테마 피드.
 
     거래대금 단위는 **바꾸지 않는다**. 시트 칸도 final_groups.json 도 백만원이고
@@ -162,7 +192,14 @@ def themes_feed(groups: list[dict], code_map: dict[str, str], day: str,
                 "amount": s.get("amount"),
             })
         if stocks:
-            out.append({"keyword": g.get("keyword") or "", "stocks": stocks})
+            keyword = g.get("keyword") or ""
+            entry = {"keyword": keyword, "stocks": stocks}
+            # 소속 명단. 대장주(stocks)의 상위집합이고, 없는 날은 칸 자체를
+            # 두지 않는다 -- 빈 목록으로 두면 '소속이 아무도 없는 테마'로 읽힌다.
+            found = (members or {}).get(keyword)
+            if found:
+                entry["members"] = found
+            out.append(entry)
     return {
         "date": day,
         "label": label,
@@ -380,17 +417,22 @@ def cmd_themes(args) -> int:
               "피드를 갱신하지 않습니다.", file=sys.stderr)
         return 1
 
+    final_groups = read_json("final_groups.json", []) or []
     code_map = load_code_map()
-    code_map.update(codes_from_scan(read_json("raw_scan.json", []) or [],
-                                    read_json("final_groups.json", []) or []))
+    code_map.update(codes_from_scan(read_json("raw_scan.json", []) or [], final_groups))
+    members = members_by_keyword(final_groups)
     payload = themes_feed(groups, code_map, day, label,
-                          datetime.now(KST).isoformat(timespec="seconds"))
+                          datetime.now(KST).isoformat(timespec="seconds"), members)
 
     total = sum(len(g["stocks"]) for g in payload["groups"])
     print(f"{label} 블록 {len(payload['groups'])}개 그룹 / {total}종목")
     for g in payload["groups"]:
         names = ", ".join(s["name"] for s in g["stocks"][:3])
-        print(f"  [{g['keyword']}] {len(g['stocks'])}종목 — {names}")
+        extra = f" (소속 {len(g['members'])}종목)" if g.get("members") else ""
+        print(f"  [{g['keyword']}] {len(g['stocks'])}종목{extra} — {names}")
+    if not members:
+        print("  [주의] 소속 명단이 비어 있습니다 — 그날 스캔이 없는 실행입니다. "
+              "봇은 소속 판정만 끄고 나머지는 그대로 돕니다.")
     if payload["missing_codes"]:
         print(f"  [주의] 코드를 못 붙인 종목 {len(payload['missing_codes'])}개: "
               f"{', '.join(payload['missing_codes'])}", file=sys.stderr)
