@@ -250,5 +250,43 @@ class SupplyExport(unittest.TestCase):
         self.assertEqual(supply_demand.consensus_window(w), ["9/14"])
 
 
+
+class Members(unittest.TestCase):
+    """테마 소속 명단. 시트에는 대장주 다섯만 오르므로 스캔 결과에서 가져온다."""
+
+    def groups(self):
+        return [{"keyword": "반도체 기판·AI PCB",
+                 "members": [{"name": "이수페타시스", "code": "007660", "rate": 8.1},
+                             {"name": "티엘비", "code": "356860", "rate": 2.67},
+                             {"name": "빈코드", "code": "", "rate": 1.0}]}]
+
+    def test_키워드별로_묶고_코드를_여섯자리로_맞춘다(self):
+        got = feed_export.members_by_keyword(self.groups())
+        codes = [s["code"] for s in got["반도체 기판·AI PCB"]]
+        self.assertEqual(codes, ["007660", "356860"])   # 코드 없는 것은 버린다
+
+    def test_스캔이_없는_날은_빈_지도다(self):
+        # 시트에서 복원하거나 지난 날짜를 다시 내보내는 실행이다.
+        self.assertEqual(feed_export.members_by_keyword([]), {})
+        self.assertEqual(feed_export.members_by_keyword(None), {})
+
+    def test_피드에_소속이_실린다(self):
+        sheet = [{"keyword": "반도체 기판·AI PCB",
+                  "stocks": [{"name": "이수페타시스", "code": "007660",
+                              "rate": 8.1, "amount": 1000}]}]
+        out = feed_export.themes_feed(sheet, {}, "20260921", "9/21", "t",
+                                      feed_export.members_by_keyword(self.groups()))
+        [g] = out["groups"]
+        self.assertEqual([s["code"] for s in g["stocks"]], ["007660"])
+        self.assertIn("356860", [s["code"] for s in g["members"]])
+
+    def test_소속이_없으면_칸을_두지_않는다(self):
+        # 빈 목록으로 두면 '소속이 아무도 없는 테마'로 읽힌다.
+        sheet = [{"keyword": "원전", "stocks": [{"name": "두산", "code": "000150",
+                                                "rate": 3.0, "amount": 500}]}]
+        out = feed_export.themes_feed(sheet, {}, "20260921", "9/21", "t", {})
+        self.assertNotIn("members", out["groups"][0])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
