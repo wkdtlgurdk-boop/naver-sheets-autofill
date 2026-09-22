@@ -456,6 +456,17 @@ def test_shipped_exclusion_file_is_readable():
           bool(ts.stock_exclusion(beomhan, "조선기자재", None, ex["stocks"])), True)
     check("범한퓨얼셀 @ 연료전지 안 걸림",
           ts.stock_exclusion(beomhan, "연료전지", None, ex["stocks"]), None)
+    samhyun = {"name": "삼현", "code": "437730"}
+    check("삼현 @ 자율주행차 걸림",
+          bool(ts.stock_exclusion(samhyun, "자율주행차", None, ex["stocks"])), True)
+    check("삼현 @ 로봇 안 걸림",
+          ts.stock_exclusion(samhyun, "로봇", None, ex["stocks"]), None)
+    samsung = {"name": "삼성전자", "code": "005930"}
+    check("삼성전자 @ 자율주행차 걸림",
+          bool(ts.stock_exclusion(samsung, "자율주행차", None, ex["stocks"])), True)
+    check("삼성전자 @ S7 안 걸림",
+          ts.stock_exclusion(samsung, "S7(삼성전자/SK하이닉스 등)", None,
+                             ex["stocks"]), None)
 
 
 def main() -> int:
