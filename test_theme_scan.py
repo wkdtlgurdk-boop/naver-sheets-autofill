@@ -344,6 +344,40 @@ def test_stock_without_themes_is_dropped_everywhere():
     check("전역 제외", [s["name"] for s in kept[0]["qualifying"]], ["가", "나", "다"])
 
 
+def test_except_themes_keeps_the_stock_only_where_it_belongs():
+    """삼성전자는 IDM 자리에만 남고 나머지 테마에서는 전부 빠진다.
+
+    빼야 할 자리를 하나씩 적는 쪽은 끝이 없다 — 네이버가 새 테마에 이 종목을
+    넣으면 그날부터 조용히 샌다. 남길 자리는 둘뿐이라 그쪽을 적는다.
+    """
+    ex = {"themes": [], "stocks": [
+        {"name": "삼성전자", "except_themes": ["S7(", "반도체 대표주"],
+         "reason": "IDM 자리에만"}]}
+    kept = ts.filter_themes([
+        theme("S7(삼성전자/SK하이닉스 등)",
+              [("삼성전자", 5.4), ("가", 9.0), ("나", 8.0), ("다", 7.0)]),
+        theme("온디바이스 AI",
+              [("삼성전자", 5.4), ("라", 9.0), ("마", 8.0), ("바", 7.0)]),
+    ], ex)
+    names = {t["theme_name"]: [s["name"] for s in t["qualifying"]] for t in kept}
+    check("IDM 자리에는 남음", names["S7(삼성전자/SK하이닉스 등)"],
+          ["삼성전자", "가", "나", "다"])
+    check("그 밖에서는 빠짐", names["온디바이스 AI"], ["라", "마", "바"])
+
+
+def test_except_themes_does_not_shield_a_later_rule():
+    """남길 자리를 적은 규칙은 넘어갈 뿐, 다른 규칙의 판단까지 막지 않는다."""
+    ex = {"themes": [], "stocks": [
+        {"name": "삼성전자", "except_themes": ["S7("], "reason": "IDM 자리에만"},
+        {"name": "삼성전자", "themes": ["S7("], "reason": "그래도 여기서도 빼라"}]}
+    kept = ts.filter_themes([
+        theme("S7(삼성전자/SK하이닉스 등)",
+              [("삼성전자", 5.4), ("가", 9.0), ("나", 8.0), ("다", 7.0)]),
+    ], ex)
+    check("뒤 규칙이 걸림", [s["name"] for s in kept[0]["qualifying"]],
+          ["가", "나", "다"])
+
+
 def test_theme_dies_when_exclusions_take_it_below_min_count():
     """엉뚱한 종목 둘을 빼고 나면 애초에 테마가 움직인 게 아니었다."""
     ex = {"themes": [], "stocks": [
@@ -461,12 +495,16 @@ def test_shipped_exclusion_file_is_readable():
           bool(ts.stock_exclusion(samhyun, "자율주행차", None, ex["stocks"])), True)
     check("삼현 @ 로봇 안 걸림",
           ts.stock_exclusion(samhyun, "로봇", None, ex["stocks"]), None)
-    samsung = {"name": "삼성전자", "code": "005930"}
-    check("삼성전자 @ 자율주행차 걸림",
-          bool(ts.stock_exclusion(samsung, "자율주행차", None, ex["stocks"])), True)
-    check("삼성전자 @ S7 안 걸림",
-          ts.stock_exclusion(samsung, "S7(삼성전자/SK하이닉스 등)", None,
-                             ex["stocks"]), None)
+    for who, code in (("삼성전자", "005930"), ("SK하이닉스", "000660")):
+        stock = {"name": who, "code": code}
+        for theme_name in ("자율주행차", "온디바이스 AI", "IT 대표주",
+                           "HBM(고대역폭메모리)"):
+            check(f"{who} @ {theme_name} 걸림",
+                  bool(ts.stock_exclusion(stock, theme_name, None, ex["stocks"])),
+                  True)
+        for theme_name in ("S7(삼성전자/SK하이닉스 등)", "반도체 대표주(생산)"):
+            check(f"{who} @ {theme_name} 안 걸림",
+                  ts.stock_exclusion(stock, theme_name, None, ex["stocks"]), None)
 
 
 def main() -> int:

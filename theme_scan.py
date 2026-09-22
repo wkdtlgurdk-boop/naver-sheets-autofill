@@ -171,6 +171,12 @@ def stock_exclusion(stock, theme_name, keyword, rules):
     있을 이유가 없지만 연료전지 테마에서는 대표종목이 맞다 — 전역으로
     빼면 정작 맞는 자리에서도 사라진다. 아무 범위도 안 적으면 전역이다.
     code 가 적혀 있으면 코드로, 없으면 종목명으로 맞춘다.
+
+    반대 방향도 있다. except_themes 는 '여기 말고는 전부' 다 — 삼성전자는
+    네이버 테마 열 몇 개에 이름이 올라 있어서 빼야 할 자리를 하나씩 적는
+    쪽이 끝이 없고, 새 테마가 생기면 조용히 새는 반면, 남길 자리는 둘뿐이다.
+    남길 자리가 매칭되면 이 규칙은 그냥 넘어간다 — 다른 규칙이 같은 종목을
+    여기서 빼자고 할 수도 있으므로 멈추지는 않는다.
     """
     for rule in rules:
         code = str(rule.get("code") or "").strip()
@@ -179,6 +185,9 @@ def stock_exclusion(stock, theme_name, keyword, rules):
             if code != stock.get("code"):
                 continue
         elif not name or name != stock.get("name"):
+            continue
+        keep = rule.get("except_themes") or []
+        if any(str(p) and str(p) in theme_name for p in keep):
             continue
         themes = rule.get("themes") or []
         keywords = rule.get("keywords") or []
