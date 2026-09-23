@@ -172,7 +172,16 @@ def main() -> int:
     # 20:10 에 띄우고, 그게 안 뜬 날을 위해 GitHub cron 이 21:10 에 한 번 더
     # 돈다. 둘 다 뜬 날에는 뒤엣것이 여기서 멈춘다.
     posted_id = already_posted(user_id, token, now)
-    if posted_id:
+    if posted_id and os.environ.get("THREADS_ALLOW_BACKFILL") == "1":
+        # 사람이 repost 로 부른 실행이다. 그 입력은 설명부터 "같은 날 글이 둘이
+        # 될 수 있음" 이라고 말하고 있으므로, 여기서 막으면 그 입력이 하는 일이
+        # 없어진다. 9/22 를 중복 카드 없이 다시 올리려던 실행이 이 줄에서 1초
+        # 만에 멈췄다 -- 리포의 카드만 갈아 끼우고 스레드 글은 옛것 그대로였다.
+        # 메타는 게시 때 이미지를 받아다 자기 쪽에 두므로, 리포를 고쳐도 이미
+        # 올라간 글은 바뀌지 않는다. 다시 올리는 것이 유일한 방법이다.
+        print(f"[threads] {caption_date(now)} 글이 이미 있지만({posted_id}) "
+              "다시 올립니다 — 같은 날 글이 둘이 됩니다.", file=sys.stderr)
+    elif posted_id:
         return give_up(f"{caption_date(now)} 글이 이미 올라가 있습니다 ({posted_id})")
 
     day = f"{now:%Y%m%d}"
