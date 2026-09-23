@@ -139,6 +139,12 @@ def ensure_daily_date(book: Spreadsheet, gid: int, now: datetime) -> int:
         if seen_dated:
             target = r
             break
+    if target is None and seen_dated:
+        # 앞 블록이 전부 날짜로 찼다. 템플릿 블록은 17개인데 한 달 영업일은
+        # 22~23일이라, 달력이 1일이 아니라 그 주 월요일(9월은 8/31)부터 시작하면
+        # 넷째 주 중간에 바닥난다 — 2026-09-23 이 그렇게 멈췄다. 사람이 블록을
+        # 복사해 붙이던 일을 여기서 한다.
+        target = extend_daily(book, gid, headers, grid)
     if target is None:
         raise SystemExit(
             f"[중단] '{wanted}' 도 없고 채울 빈 블록도 없습니다. "
@@ -156,6 +162,36 @@ def ensure_daily_date(book: Spreadsheet, gid: int, now: datetime) -> int:
     book.write(gid, f"A{target}", [[now.strftime("%Y-%m-%d")]])
     print(f"  Daily: A{target} 에 오늘 날짜({wanted}) 기입 — 빈 블록이었음")
     return target
+
+
+def extend_daily(book: Spreadsheet, gid: int, headers: list[int],
+                 grid: list[list]) -> int:
+    """마지막 블록 아래에 템플릿의 빈 블록을 하나 붙이고 그 헤더행을 돌려준다.
+
+    채워진 블록을 복사하지 않고 템플릿 탭의 마지막 블록을 가져온다. 그쪽은
+    값이 비어 있고 대표행 수식(AVERAGEA/SUM)만 들고 있어서, 붙인 뒤 지울
+    것이 없다. 블록 높이도 템플릿의 헤더 간격에서 읽는다 — 가정하지 않는다.
+    """
+    tpl = book.read_formatted(DAILY_TEMPLATE_GID, f"A1:Z{SEARCH_ROWS}")
+    tpl_headers = [r for r in range(1, len(tpl) + 1)
+                   if any(str(v).strip() == "종목명" for v in (tpl[r - 1] or []))]
+    if len(tpl_headers) < 2:
+        raise SystemExit("[중단] 템플릿 탭에서 블록을 두 개 이상 찾지 못해 "
+                         "블록 높이를 알 수 없습니다. 탭을 늘리지 않습니다.")
+    height = tpl_headers[-1] - tpl_headers[-2]
+    src = tpl_headers[-1]
+    new = headers[-1] + height
+
+    # 붙일 자리가 비어 있어야 한다. 표 아래에 사람이 적어 둔 메모를 덮지 않는다.
+    for r in range(new - 1, new - 1 + height):
+        row = grid[r - 1] if r - 1 < len(grid) else []
+        if any(str(v).strip() for v in row):
+            raise SystemExit(f"[중단] 새 블록 자리({r}행)가 비어 있지 않습니다. "
+                             "탭을 늘리지 않습니다.")
+
+    book.copy_rows(DAILY_TEMPLATE_GID, src - 1, src - 2 + height, gid, new - 1)
+    print(f"  Daily: 블록이 모두 차서 템플릿 블록을 {new - 1}~{new - 2 + height}행에 붙였습니다")
+    return new
 
 
 def as_of() -> tuple[datetime, bool]:

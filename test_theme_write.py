@@ -47,6 +47,9 @@ class FakeBook:
         self.values: dict[tuple[int, int], object] = {}
         self.formulas: dict[tuple[int, int], str] = {}
         self.writes: list[tuple[str, list[list]]] = []
+        # 다른 탭(템플릿). 여기 없는 gid 는 전부 자기 자신이다.
+        self.tabs: dict[int, "FakeBook"] = {}
+        self.copies: list[tuple] = []
 
     def put(self, a1: str, value, formula: str | None = None):
         c, r, _, _ = parse_a1(a1)
@@ -66,14 +69,19 @@ class FakeBook:
             rows.pop()
         return rows
 
+    def _tab(self, gid):
+        return self.tabs.get(gid, self)
+
     def read(self, gid, a1):
-        return self._grab(a1, self.values)
+        return self._grab(a1, self._tab(gid).values)
 
     def read_formatted(self, gid, a1):
-        grid = {k: ("" if v == "" else str(v)) for k, v in self.values.items()}
+        grid = {k: ("" if v == "" else str(v)) for k, v in self._tab(gid).values.items()}
         return self._grab(a1, grid)
 
     def read_formulas(self, gid, a1):
+        if self._tab(gid) is not self:
+            return self._tab(gid).read_formulas(FAKE_GID, a1)
         merged = dict(self.values)
         merged.update(self.formulas)
         return self._grab(a1, merged)
@@ -85,6 +93,47 @@ class FakeBook:
             for dc, v in enumerate(row):
                 self.values[(c0 + dc, r0 + dr)] = v
         return sum(len(r) for r in values)
+
+
+    def copy_rows(self, src_gid, first, last, dst_gid, dst_first):
+        """붙여넣기처럼 값과 수식을 옮긴다. 수식의 행 번호는 옮긴 만큼 민다."""
+        self.copies.append((src_gid, first, last, dst_gid, dst_first))
+        src, dst = self._tab(src_gid), self._tab(dst_gid)
+        shift = dst_first - first
+
+        def moved(f):
+            return re.sub(r"([A-Z]+)([0-9]+)",
+                          lambda m: f"{m.group(1)}{int(m.group(2)) + shift}", f)
+
+        for (c, r), v in list(src.values.items()):
+            if first <= r <= last:
+                dst.values[(c, r + shift)] = v
+        for (c, r), f in list(src.formulas.items()):
+            if first <= r <= last:
+                dst.formulas[(c, r + shift)] = moved(f)
+
+
+def add_block(book, header_row, slots=6, day=""):
+    """헤더행·대표행 수식만 있는 블록 하나. day 를 주면 A열에 적는다."""
+    if day:
+        book.put(f"A{header_row}", day)
+    for i in range(slots):
+        c1 = tw.col_letter(1 + i * 3)
+        c2 = tw.col_letter(2 + i * 3)
+        c3 = tw.col_letter(3 + i * 3)
+        book.put(f"{c1}{header_row}", "종목명")
+        book.put(f"{c2}{header_row}", "상승률")
+        book.put(f"{c3}{header_row}", "거래대금(백만)")
+        book.put(f"{c2}{header_row + 1}", 0.0, f"=AVERAGEA({c2}{header_row + 2}:{c2}{header_row + 8})")
+        book.put(f"{c3}{header_row + 1}", 0, f"=SUM({c3}{header_row + 2}:{c3}{header_row + 8})")
+
+
+def make_template():
+    """템플릿 탭: 157·167행에 빈 블록 두 개 (실제 템플릿의 마지막 두 블록 자리)."""
+    tpl = FakeBook()
+    add_block(tpl, 157)
+    add_block(tpl, 167)
+    return tpl
 
 
 def make_daily(header_row=157, slots=6, day="8/28"):
@@ -253,12 +302,46 @@ def test_daily_aborts_without_template_formulas():
 
 
 def test_daily_aborts_on_missing_day():
+    # 블록이 다 찼는데 템플릿에서 블록 높이를 알 수 없으면 멈춘다.
     book = make_daily(day="8/27")
+    book.tabs[tw.DAILY_TEMPLATE_GID] = FakeBook()
     try:
         tw.write_daily(book, FAKE_GID, GROUPS, FRIDAY)
     except SystemExit:
+        check("템플릿 없이 탭을 늘리지 않음", book.copies, [])
         return
     failures.append("오늘 날짜 블록이 없는데도 중단하지 않음")
+
+
+def test_daily_extends_when_blocks_run_out():
+    # 2026-09-23: 9월 탭 블록 17개가 8/31~9/22 로 다 찼다. 템플릿의 빈 블록을
+    # 마지막 블록 아래(10행 간격)에 붙이고 거기에 쓴다.
+    book = FakeBook()
+    add_block(book, 157, day="8/26")
+    add_block(book, 167, day="8/27")
+    book.tabs[tw.DAILY_TEMPLATE_GID] = make_template()
+    tw.write_daily(book, FAKE_GID, GROUPS, FRIDAY)
+    check("템플릿 마지막 블록을 177행 헤더로 복사", book.copies,
+          [(tw.DAILY_TEMPLATE_GID, 166, 175, FAKE_GID, 176)])
+    check("새 블록에 날짜", book.values.get((0, 177)), "2026-08-28")
+    check("대표행 수식이 새 블록을 가리킴", book.formulas.get((2, 178)),
+          "=AVERAGEA(C179:C185)")
+    check("대표행 키워드", book.values.get((1, 178)), "2차전지")
+    check("첫 종목", book.values.get((1, 179)), "엔켐")
+    check("앞 블록은 그대로", book.values.get((1, 168)), None)
+
+
+def test_daily_does_not_extend_over_notes():
+    book = FakeBook()
+    add_block(book, 157, day="8/27")
+    book.put("B170", "메모")  # 새 블록이 들어갈 자리(166~175)
+    book.tabs[tw.DAILY_TEMPLATE_GID] = make_template()
+    try:
+        tw.write_daily(book, FAKE_GID, GROUPS, FRIDAY)
+    except SystemExit:
+        check("메모 위에 붙이지 않음", book.copies, [])
+        return
+    failures.append("새 블록 자리에 내용이 있는데도 중단하지 않음")
 
 
 def test_daily_aborts_on_duplicate_day():
