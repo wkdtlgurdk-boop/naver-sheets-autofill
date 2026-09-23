@@ -116,6 +116,7 @@ def groups_from_grid(grid: list[list], wanted: str) -> list[dict]:
 
     slots = [c for c in range(1, 40) if _cell(grid, header_row, c) == HEADER_MARK]
     groups = []
+    seen: dict[frozenset, str] = {}   # 이미 나온 종목 명단 -> 그 칸의 키워드
     for slot in slots:
         keyword = _cell(grid, header_row + 1, slot)
         if not keyword or keyword.startswith("#"):   # #DIV/0! 같은 빈 슬롯
@@ -144,6 +145,26 @@ def groups_from_grid(grid: list[list], wanted: str) -> list[dict]:
 
         if not stocks:
             continue
+
+        # 같은 그룹이 여러 칸을 차지한 블록이 있다. theme_write 는 키워드
+        # 문자열이 **정확히** 같을 때만 그 칸을 재사용하는데, 그룹 이름은
+        # 모델이 그날그날 붙이는 자유 서술이라 하루에 여러 번 돌면 흔들린다.
+        # 9/22 는 실행이 일곱 번 도는 동안 '반도체 기판·PCB(FC-BGA/SOCAMM)',
+        # '반도체 기판·PCB', '반도체 기판·PCB (FC-BGA/SOCAMM)' 세 철자가
+        # 각각 빈 칸을 하나씩 먹었다 -- 종목 다섯이 모두 같은 한 그룹인데
+        # 카드도 스레드도 같은 테마를 세 장 냈다.
+        #
+        # 이름은 못 믿어도 명단은 믿을 수 있다. 종목이 똑같으면 같은 그룹으로
+        # 보고 먼저 나온 칸(왼쪽)만 남긴다. 부분적으로 겹치는 칸은 건드리지
+        # 않는다 -- 그쪽은 실제로 다른 테마일 수 있다.
+        names = frozenset(s["name"] for s in stocks)
+        if names in seen:
+            print(f"  [{keyword}] {slots.index(slot) + 1}번째 칸은 "
+                  f"'{seen[names]}' 와 종목이 같습니다 — 같은 그룹으로 보고 "
+                  f"건너뜁니다.", file=sys.stderr)
+            continue
+        seen[names] = keyword
+
         groups.append({
             "keyword": keyword,
             # 시트는 병합 전 원본 테마명을 들고 있지 않다. 카드 하단 줄에는
