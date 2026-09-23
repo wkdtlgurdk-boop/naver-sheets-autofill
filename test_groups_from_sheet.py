@@ -41,6 +41,58 @@ def sample():
     })
 
 
+def duplicated_block():
+    """9/22 블록의 모양. 같은 그룹이 이름만 달리해 세 칸을 먹었다.
+
+    실물 그대로다 -- 종목 다섯과 상승률까지 세 칸이 모두 같고, 이름만
+    괄호와 공백이 다르다. 카드가 같은 테마를 세 장 냈던 자리다.
+    """
+    pcb = [("코리아써키트", "26.96%", "1,953"), ("티엘비", "17.06%", "1,102"),
+           ("인터플렉스", "14.70%", "169"), ("네오티스", "14.46%", "124"),
+           ("티에프이", "10.65%", "350")]
+    rows = {
+        5: {0: "9/22", 1: "종목명", 2: "상승률", 3: "거래대금(억)",
+            4: "종목명", 5: "상승률", 6: "거래대금(억)",
+            7: "종목명", 8: "상승률", 9: "거래대금(억)"},
+        6: {1: "온디바이스 AI", 4: "반도체 기판·PCB(FC-BGA/SOCAMM)",
+            7: "반도체 기판·PCB"},
+    }
+    ondevice = [("노타", "29.97%", "526"), ("심텍", "13.93%", "2,806")]
+    for i, (name, rate, amount) in enumerate(ondevice, start=1):
+        rows.setdefault(6 + i, {}).update({1: name, 2: rate, 3: amount})
+    for i, (name, rate, amount) in enumerate(pcb, start=1):
+        rows.setdefault(6 + i, {}).update({4: name, 5: rate, 6: amount,
+                                           7: name, 8: rate, 9: amount})
+    return grid_of(rows, height=20, width=12)
+
+
+class 중복슬롯(unittest.TestCase):
+    """이름이 흔들려 한 그룹이 여러 칸에 앉은 블록.
+
+    theme_write 는 키워드 문자열이 정확히 같을 때만 칸을 재사용한다. 그룹
+    이름은 모델이 붙이는 자유 서술이라 하루에 여러 번 돌면 철자가 흔들리고,
+    그때마다 빈 칸을 하나씩 먹는다. 읽는 쪽에서 막는다.
+    """
+
+    def test_종목이_같은_칸은_하나만_남는다(self):
+        groups = groups_from_grid(duplicated_block(), "9/22")
+        self.assertEqual([g["keyword"] for g in groups],
+                         ["온디바이스 AI", "반도체 기판·PCB(FC-BGA/SOCAMM)"])
+
+    def test_먼저_나온_칸이_남는다(self):
+        groups = groups_from_grid(duplicated_block(), "9/22")
+        pcb = groups[1]
+        self.assertEqual([s["name"] for s in pcb["top5"]][0], "코리아써키트")
+        self.assertEqual(pcb["total_qualifying"], 5)
+
+    def test_종목이_다르면_건드리지_않는다(self):
+        # 겹치기만 하는 칸은 실제로 다른 테마일 수 있다. 완전히 같을 때만 접는다.
+        grid = duplicated_block()
+        grid[10][7] = "다른종목"      # 11행(세 번째 칸 마지막 줄)만 바꾼다
+        groups = groups_from_grid(grid, "9/22")
+        self.assertEqual(len(groups), 3)
+
+
 class Parsing(unittest.TestCase):
     def test_상승률은_퍼센트_표기를_읽는다(self):
         self.assertEqual(parse_rate("22.00%"), 22.0)
