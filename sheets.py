@@ -66,6 +66,11 @@ class Spreadsheet:
             s["properties"]["sheetId"]: s["properties"]["title"]
             for s in meta.get("sheets", [])
         }
+        self._rows = {
+            s["properties"]["sheetId"]:
+                int(s["properties"].get("gridProperties", {}).get("rowCount", 0))
+            for s in meta.get("sheets", [])
+        }
 
     def title_for_gid(self, gid: int) -> str:
         try:
@@ -113,7 +118,39 @@ class Spreadsheet:
         props = resp["replies"][0]["duplicateSheet"]["properties"]
         gid = int(props["sheetId"])
         self._by_gid[gid] = props["title"]
+        self._rows[gid] = int(props.get("gridProperties", {}).get("rowCount", 0))
         return gid
+
+    def copy_rows(self, src_gid: int, first: int, last: int,
+                  dst_gid: int, dst_first: int) -> None:
+        """Copy rows first..last (1-based, inclusive) of one tab onto another.
+
+        Used to add a calendar block when a month outgrows the template's
+        seventeen. A paste carries merges, formats and formulas (relative
+        references shift with the rows), which a value write cannot. The
+        target tab is grown first if the block would run past its last row.
+        """
+        self.title_for_gid(src_gid)
+        self.title_for_gid(dst_gid)
+        height = last - first + 1
+        need = dst_first + height - 1
+        have = self._rows.get(dst_gid, 0)
+        requests = []
+        if have < need:
+            requests.append({"appendDimension": {
+                "sheetId": dst_gid, "dimension": "ROWS", "length": need - have,
+            }})
+        requests.append({"copyPaste": {
+            "source": {"sheetId": src_gid,
+                       "startRowIndex": first - 1, "endRowIndex": last},
+            "destination": {"sheetId": dst_gid,
+                            "startRowIndex": dst_first - 1,
+                            "endRowIndex": dst_first - 1 + height},
+            "pasteType": "PASTE_NORMAL",
+        }})
+        self._api.batchUpdate(spreadsheetId=self.id,
+                              body={"requests": requests}).execute()
+        self._rows[dst_gid] = max(have, need)
 
     @staticmethod
     def _quote(title: str) -> str:
