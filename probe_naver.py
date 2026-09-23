@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -39,11 +40,14 @@ HEADERS = {
 # 지수 투자자동향 후보. market_summary.py 가 쓰는 trend 가 첫째고, 나머지는
 # '여러 날치'를 줄 법한 이웃 경로다. 404 는 답의 일부이므로 죽지 않고 찍는다.
 INDEX_CANDIDATES = [
+    # 1라운드에서 하루치 단일 객체로 확인됨. 날짜 파라미터가 먹는지 본다 --
+    # 먹으면 10번 불러서 10거래일을 만든다.
     "https://m.stock.naver.com/api/index/KOSPI/trend",
-    "https://m.stock.naver.com/api/index/KOSPI/investorTrend",
-    "https://m.stock.naver.com/api/index/KOSPI/price?pageSize=10&page=1",
-    "https://api.stock.naver.com/index/KOSPI/investorTrend",
-    "https://api.stock.naver.com/chart/domestic/index/KOSPI/investor",
+    "https://m.stock.naver.com/api/index/KOSPI/trend?bizdate=20260922",
+    "https://m.stock.naver.com/api/index/KOSPI/trend?pageSize=10",
+    # 예전부터 있던 '투자자별 매매동향' 표. HTML 이지만 한 번에 20일쯤 준다.
+    "https://finance.naver.com/sise/investorDealTrendDay.naver?bizdate=&sosok=01&page=1",
+    "https://finance.naver.com/sise/investorDealTrendDay.naver?sosok=01",
 ]
 
 # 지금 수급 시트가 읽는 경로. 여기에 시장 전체 순매수액이 딸려 오는지도
@@ -67,7 +71,7 @@ def get(url: str, headers: dict) -> tuple[int, object | None, str]:
             try:
                 return resp.status, json.loads(raw), ""
             except json.JSONDecodeError:
-                return resp.status, None, f"JSON 아님 (앞 80자: {raw[:80]!r})"
+                return resp.status, raw, "JSON 아님 -- HTML 로 본다"
     except urllib.error.HTTPError as exc:
         return exc.code, None, exc.reason or ""
     except Exception as exc:                       # noqa: BLE001 - 진단용
@@ -140,6 +144,17 @@ def probe_index() -> None:
         print(f"\n--- {url}")
         print(f"    HTTP {code}{('  ' + note) if note else ''}")
         if doc is None:
+            continue
+        if isinstance(doc, str):
+            days = re.findall(r"\d{4}\.\d{2}\.\d{2}", doc)
+            uniq = sorted(set(days), reverse=True)
+            print(f"    HTML {len(doc):,}자, 날짜꼴 {len(days)}개 / 고유 {len(uniq)}개")
+            if len(uniq) > 1:
+                print(f"    날짜: {uniq[:12]}  ← **여러 날치**")
+                # 표 한 줄이 어떻게 생겼는지 첫 날짜 주변만 잘라 본다.
+                i = doc.find(uniq[0])
+                print("    --- 첫 날짜 주변 ---")
+                print("    " + " ".join(doc[i:i + 700].split())[:600])
             continue
         if isinstance(doc, dict):
             print(f"    최상위 키: {', '.join(doc.keys())}")
