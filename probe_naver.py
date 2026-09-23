@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """일회용 진단. 네트워크가 막힌 개발 세션 대신 러너가 네이버를 찔러 본다.
 
-## 묻는 것
+## 밝혀진 것 (2026-09-23 실측)
 
-아침 알림(tradesignal)의 수급 블록을 '최근 5거래일 코스피 외국인 순매수'로
-바꾸려 한다. 지금 쓰는 값은 순매수 **상위 20종목** 합계라서 부호가 없다 --
-상위에서 빠진 것이 판 것인지 21등이 된 것인지 구분할 수 없어 '매도'라는
-말을 쓸 수 없다.
+아침 알림의 수급 머리글을 '코스피 시장 전체 순매수'로 바꾸면서 물었던 것과
+그 답이다. 경로가 또 죽는 날 여기서부터 보라고 남긴다.
 
-시장 전체 순매수액은 부호가 있다. market_summary.py 가 이미 그 값을 하루치
-받아 오고(/api/index/{code}/trend 의 foreignValue) Monthly 시트에 매일 쌓고
-있다. 남은 질문은 하나다:
+    /api/index/KOSPI/trend                200  하루치 단일 객체
+        bizdate / personalValue / foreignValue / institutionalValue
+        **bizdate 파라미터가 먹는다** -- ?bizdate=20260922 로 그 날을 받는다.
+        거래일마다 한 번씩 불러 열흘을 만드는 근거가 이것이다.
+    /api/index/KOSPI/price?pageSize=10    200  지수 OHLC 열흘치.
+        localTradedAt 이 실제로 장이 선 날짜라 휴장일 달력으로 쓴다.
+    /api/index/KOSPI/investorTrend        404
+    api.stock.naver.com/index/KOSPI/investorTrend        404
+    api.stock.naver.com/chart/domestic/index/KOSPI/investor  400
+    finance.naver.com/sise/investorDealTrendDay.naver    410 (네이버가 지웠다)
 
-    **네이버가 그 값을 여러 날치로 한 번에 주는가?**
-
-준다면 봇이 직접 받아 쓰면 된다 -- 시트도 피드도 안 거치고, 첫날부터 5일이
-다 찬다. 안 주면 Monthly 시트(달력 격자)를 읽거나 날마다 피드에 쌓아야 하고,
-후자는 5거래일이 지나야 창이 찬다.
+즉 **여러 날치를 한 번에 주는 경로는 없다.** 하루치를 날마다 부르는 수밖에
+없고, 그게 tradesignal/naver.py 의 fetch_index_flows 다.
 
 ## 값은 안 찍는다
 
@@ -28,7 +30,6 @@ from __future__ import annotations
 import json
 import re
 import urllib.error
-import urllib.parse
 import urllib.request
 
 HEADERS = {
@@ -49,14 +50,6 @@ INDEX_CANDIDATES = [
     "https://finance.naver.com/sise/investorDealTrendDay.naver?bizdate=&sosok=01&page=1",
     "https://finance.naver.com/sise/investorDealTrendDay.naver?sosok=01",
 ]
-
-# 지금 수급 시트가 읽는 경로. 여기에 시장 전체 순매수액이 딸려 오는지도
-# 같은 실행에서 확인해 둔다 -- 있으면 위 후보가 다 죽어도 길이 남는다.
-RANK_URL = "https://stock.naver.com/api/domestic/market/trend/trendForeignOrg"
-RANK_HEADERS = {
-    "Referer": "https://stock.naver.com/",
-    "User-Agent": "Mozilla/5.0 supply-demand-autofill/4.0",
-}
 
 # 날짜처럼 보이는 키. 이게 목록 원소마다 다르면 '여러 날치'다.
 DATE_HINTS = ("date", "day", "dt", "tradedat", "localtradedat", "bizdate")
@@ -137,7 +130,7 @@ def series_verdict(doc) -> str:
 
 def probe_index() -> None:
     print("=" * 70)
-    print("Q1. 코스피 지수 투자자동향을 여러 날치로 주는 경로가 있는가")
+    print("코스피 지수 투자자동향 경로가 아직 살아 있는가")
     print("=" * 70)
     for url in INDEX_CANDIDATES:
         code, doc, note = get(url, HEADERS)
@@ -165,32 +158,11 @@ def probe_index() -> None:
         print(skeleton(doc, 2)[:2000])
 
 
-def probe_rank() -> None:
-    print("\n" + "=" * 70)
-    print("Q2. 수급 상위 API 에 시장 전체 순매수액이 딸려 오는가")
-    print("=" * 70)
-    qs = urllib.parse.urlencode({
-        "investorType": "FOREIGNER", "tradeType": "KRX",
-        "marketType": "KOSPI", "startIdx": 0, "pageSize": 20, "periodType": "DAY",
-    })
-    code, doc, note = get(f"{RANK_URL}?{qs}", RANK_HEADERS)
-    print(f"HTTP {code}{('  ' + note) if note else ''}")
-    if not isinstance(doc, dict):
-        return
-    print(f"최상위 키: {', '.join(doc.keys())}")
-    sections = doc.get("sections") or {}
-    rest = {k: v for k, v in sections.items() if k != "buyRankList"}
-    print("\nbuyRankList 를 뺀 나머지:")
-    print(skeleton(rest, 1) if rest else "  (없음 -- 상위 목록이 전부다)")
-
-
 def main() -> int:
     probe_index()
-    probe_rank()
     print("\n" + "=" * 70)
-    print("읽는 법: Q1 에서 '← **여러 날치**' 가 붙은 줄이 있으면 봇이 그 경로를")
-    print("직접 받아 쓰면 된다. 하나도 없으면 Monthly 시트를 읽거나 날마다")
-    print("피드에 쌓아야 한다.")
+    print("trend 가 200 이고 bizdate 가 먹으면 fetch_index_flows 는 멀쩡하다.")
+    print("price 가 죽으면 휴장일 달력이 없어지므로 거기부터 고쳐야 한다.")
     return 0
 
 
