@@ -51,8 +51,12 @@ def get(url: str, headers: dict | None = None, timeout: int = 20):
         return 0, None, f"{type(exc).__name__}: {exc}"
 
 
-def trading_days(market: str, pages: int = 4, size: int = 100) -> list[str]:
-    """실제로 장이 선 날짜(YYYY-MM-DD). 오래된 것이 앞에 온다."""
+def trading_days(market: str, pages: int = 8, size: int = 60) -> list[str]:
+    """실제로 장이 선 날짜(YYYY-MM-DD). 오래된 것이 앞에 온다.
+
+    pageSize 상한이 있다 -- 100 은 400 을 낸다(2026-09-25 실측). 60 으로
+    끊어 여러 장을 받는다. 종목별 trend 경로도 같은 상한이었다.
+    """
     out: set[str] = set()
     for page in range(1, pages + 1):
         code, doc, note = get(PRICE.format(market=market, size=size, page=page),
