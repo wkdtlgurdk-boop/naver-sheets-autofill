@@ -35,6 +35,7 @@ import pathlib
 import sys
 import urllib.parse
 import urllib.request
+import krx_holidays
 from datetime import datetime, timedelta, timezone
 
 from sheets import Spreadsheet
@@ -380,6 +381,16 @@ def main() -> int:
     if now.weekday() > 4:
         print(f"[건너뜀] 주말({now:%A})")
         return 0
+    # 휴장일도 같다. 위에서 이미 '볼 날'로 물러난 뒤이므로 그 날을 본다 --
+    # 오늘이 아니라 수급을 읽으려는 거래일이 기준이다. 시계가 Apps Script 와
+    # cron 둘이라 관문은 봇 안에 둔다.
+    holiday = krx_holidays.holiday_name(now.date())
+    if holiday:
+        print(f"[건너뜀] 휴장일({holiday}) — 그날 수급이 없다")
+        return 0
+    if not krx_holidays.known_year(now.year):
+        print(f"[경고] {now.year}년 휴장일 달력이 없습니다 — "
+              f"krx_holidays.py 에 덧붙이세요")
     today_key = now.strftime("%Y%m%d")
     today_label = f"{now.month}/{now.day}"
     print(f"{now:%Y-%m-%d %H:%M} KST — 오늘 {today_label}"
