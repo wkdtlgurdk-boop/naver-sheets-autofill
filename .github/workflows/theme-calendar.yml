@@ -178,6 +178,7 @@ jobs:
       - name: Run logic tests
         run: |
           python test_theme_scan.py
+          python test_theme_fit.py
           python test_llm_group.py
           python test_as_of.py
           python test_theme_write.py

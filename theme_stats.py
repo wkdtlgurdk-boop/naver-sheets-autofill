@@ -358,6 +358,20 @@ def leader_rate_bucket(r: dict) -> str:
     return "c.15% 미만"
 
 
+def gap_bucket(r: dict) -> str | None:
+    """대장주가 다음 날 시가에서 얼마나 뜨고 시작했나. 갭이 클수록 시가 매수는 늦다."""
+    g = (r.get("leader") or {}).get("gap")
+    if g is None:
+        return None
+    if g < 0:
+        return "a.갭하락"
+    if g < 3:
+        return "b.0~3%"
+    if g < 8:
+        return "c.3~8%"
+    return "d.8%+"
+
+
 def size_bucket(r: dict) -> str:
     n = len(r["group"]["stocks"])
     return "a.5종목+" if n >= 5 else ("b.3~4종목" if n >= 3 else "c.1~2종목")
@@ -428,6 +442,7 @@ def build(days: dict[date, list[dict]], bars_by_code: dict[str, list[dict]],
         "by_streak": by_streak,
         "by_leader_rate": bucket_stats(rows, leader_rate_bucket),
         "by_size": bucket_stats(rows, size_bucket),
+        "by_gap": bucket_stats(rows, gap_bucket),
         "lineages": lineages(rows, (last or date.today()) - timedelta(days=60)),
         "current": current(rows, by_streak),
     }
@@ -467,6 +482,7 @@ def report_md(stats: dict) -> str:
     table("며칠째 이어진 테마인가", stats["by_streak"])
     table("대장주 상승률", stats["by_leader_rate"])
     table("그룹 크기", stats["by_size"])
+    table("다음 날 시가 갭 (대장주)", stats["by_gap"])
 
     if stats["lineages"]:
         lines.extend(["## 최근 60일 오래 간 테마", "",
@@ -496,6 +512,7 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="latest.json / report.md 를 쓸 곳")
     ap.add_argument("--days", type=int, default=0, help="최근 N일만 (0 = 전부)")
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--affinity", help="종목별 과거 키워드 기록을 여기에 쓴다 (theme_fit)")
     args = ap.parse_args()
 
     from feed_export import load_code_map
@@ -503,6 +520,16 @@ def main() -> int:
 
     print("시트 읽는 중")
     days = read_sheet(Spreadsheet(DAILY_ID))
+    if args.affinity:
+        # 오배정 판정(theme_fit)이 읽는 기록. --days 로 자르기 전 전체에서 만들고,
+        # 휴장일에 잘못 적힌 블록은 뺀다(같은 날이 두 번 세어진다).
+        import krx_holidays
+        from theme_fit import build_affinity
+        opened = {d: g for d, g in days.items() if not krx_holidays.holiday_name(d)}
+        Path(args.affinity).write_text(
+            json.dumps(build_affinity(opened), ensure_ascii=False, indent=1) + "\n",
+            encoding="utf-8")
+        print(f"  오배정 기록 {args.affinity} 갱신 ({len(opened)}일)")
     if args.days:
         cut = date.today() - timedelta(days=args.days)
         days = {d: g for d, g in days.items() if d >= cut}
