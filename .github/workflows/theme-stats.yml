@@ -1,0 +1,87 @@
+name: theme-stats
+
+# 테마 지속성 통계. 금요일 밤, 그 주 테마 달력이 다 찬 뒤에 돈다.
+#
+# 22:40 KST (13:40 UTC). theme-calendar 의 마지막 회차가 22:10 이고 보통 5~13분
+# 늦게 끝나므로 그 뒤에 둔다. 정각을 피하는 이유는 theme-calendar.yml 주석과 같다.
+#
+# 결과는 theme_bot 의 feed/stats/ 로 간다. 아침 매수 후보 봇이 latest.json 의
+# current 를 읽어 '이 테마는 N일차, 과거 N일차 대장주의 다음날 성적'을 알림에
+# 붙인다. 사람이 보는 표는 report.md 와 이 실행의 요약 화면에 있다.
+
+on:
+  schedule:
+    - cron: "40 13 * * 5"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "최근 N일만 (0 = 시트 전체)"
+        type: string
+        default: "0"
+      dry_run:
+        description: "계산만 하고 theme_bot 에 올리지 않음"
+        type: boolean
+        default: false
+
+concurrency:
+  group: theme-stats
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run logic tests
+        run: python test_theme_stats.py
+
+      - name: 통계 계산
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          python theme_stats.py --out stats_out --days "${{ inputs.days || '0' }}"
+          cat stats_out/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: theme_bot 에 올린다
+        if: ${{ inputs.dry_run != true }}
+        env:
+          CARD_REPO_TOKEN: ${{ secrets.CARD_REPO_TOKEN || secrets.CARDREPOTOKEN }}
+        run: |
+          if [ -z "$CARD_REPO_TOKEN" ]; then
+            echo "CARD_REPO_TOKEN 이 없어 올리지 않습니다 — 결과는 아티팩트에 있습니다."
+            exit 0
+          fi
+          day=$(TZ=Asia/Seoul date +%Y%m%d)
+          git clone --depth 1 \
+            "https://x-access-token:${CARD_REPO_TOKEN}@github.com/wkdtlgurdk-boop/theme_bot.git" /tmp/theme_bot
+          mkdir -p /tmp/theme_bot/feed/stats
+          cp stats_out/latest.json "/tmp/theme_bot/feed/stats/latest.json"
+          cp stats_out/latest.json "/tmp/theme_bot/feed/stats/$day.json"
+          cp stats_out/report.md "/tmp/theme_bot/feed/stats/report.md"
+          cd /tmp/theme_bot
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add feed/stats
+          git diff --cached --quiet && echo "no change" && exit 0
+          git commit -m "stats $day"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: theme-stats-${{ github.run_id }}
+          path: stats_out/
+          retention-days: 30
