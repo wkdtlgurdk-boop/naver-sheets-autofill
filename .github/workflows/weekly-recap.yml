@@ -1,0 +1,97 @@
+name: weekly-recap
+
+# 한 주 결산 카드 두 장(이번 주 테마 / 이번 주 주도주)을 그려 스레드에 올린다.
+#
+# 금요일 22:40 KST (13:40 UTC). theme-calendar 의 마지막 회차(22:10) 뒤다. 그
+# 주의 금요일 블록이 아직 안 찼으면 목요일까지로 결산한다 -- 시트에 있는 날만
+# 센다. 금요일이 휴장이어도 같은 이유로 그대로 돈다.
+#
+# 카드는 theme_bot 의 cards/<금요일>_weekly/ 에 올라간다. 스레드 API 가 공개
+# URL 로만 이미지를 받기 때문이다(post_threads.py 머리말).
+
+on:
+  schedule:
+    - cron: "40 13 * * 5"
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: "이 날짜가 든 주를 결산 (YYYY-MM-DD). 비우면 이번 주"
+        type: string
+        default: ""
+      skip_threads:
+        description: "카드만 만들고 스레드에는 올리지 않음"
+        type: boolean
+        default: false
+
+concurrency:
+  group: weekly-recap
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  recap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      THEME_AS_OF: ${{ inputs.as_of }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Run logic tests
+        run: python test_weekly.py && python test_theme_stats.py
+
+      - name: Install Korean fonts
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-cjk-extra
+
+      - name: 결산 카드
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python weekly.py cards cards
+
+      - name: theme_bot 에 올린다
+        id: publish
+        env:
+          CARD_REPO_TOKEN: ${{ secrets.CARD_REPO_TOKEN || secrets.CARDREPOTOKEN }}
+        run: |
+          if [ -z "$CARD_REPO_TOKEN" ]; then
+            echo "CARD_REPO_TOKEN 이 없어 올리지 않습니다 — 카드는 아티팩트에 있습니다."
+            exit 0
+          fi
+          dir=$(ls -d cards/*_weekly | tail -1)
+          name=$(basename "$dir")
+          git clone --depth 1 \
+            "https://x-access-token:${CARD_REPO_TOKEN}@github.com/wkdtlgurdk-boop/theme_bot.git" /tmp/theme_bot
+          mkdir -p /tmp/theme_bot/cards
+          rm -rf "/tmp/theme_bot/cards/$name"
+          cp -r "$dir" /tmp/theme_bot/cards/
+          cd /tmp/theme_bot
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A cards
+          git diff --cached --quiet || git commit -m "cards $name"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          echo "published=1" >> "$GITHUB_OUTPUT"
+
+      - name: 스레드에 올린다
+        if: ${{ steps.publish.outputs.published == '1' && inputs.skip_threads != true }}
+        env:
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID || secrets.THREADUSERID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN || secrets.THREADACCESSTOKEN }}
+        run: python weekly.py post cards
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weekly-${{ github.run_id }}
+          path: cards/
+          retention-days: 30
