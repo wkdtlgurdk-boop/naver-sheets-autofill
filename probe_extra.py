@@ -3,6 +3,27 @@
 있는지 러너가 찔러 본다. 개발 세션에서는 네이버·KRX 에 붙을 수 없다.
 
 키 이름·자료형·목록 길이와 첫 원소만 찍는다.
+
+## 밝혀진 것 (2026-09-26 실측)
+
+    종목분석 리포트
+      stock.naver.com/api/stockSecurity/researches/v2/company   200
+          items[] 에 itemCode·itemName·brokerName·goalPrice·opinionText·
+          writeDate·content(HTML). 목표가가 숫자로 온다 ->
+          industry-report-telegram-bot/target_price.py
+      m.stock.naver.com/api/research/company                    200 (목표가 없음)
+      m.stock.naver.com/api/stock/<code>/integration            200
+          researches(최근 5건), consensusInfo(priceTargetMean) 도 있다
+
+    공매도·대차잔고 -- **무인증으로 받을 곳이 없다**
+      m.stock.naver.com/api/stock/<code>/short* · lending*      404
+      finance.daum.net/api/quote/<code>/short_sellings 등        500
+      data.krx.co.kr getJsonData.cmd (MDCSTAT30xxx)             400 'LOGOUT'
+          2025 년 말부터 로그인 세션을 요구한다
+      data-dbg.krx.co.kr (KRX Open API)                          401 인증키 필요
+
+    그래서 공매도 쪽은 KRX 계정(로그인) 또는 Open API 키가 있어야 한다.
+    기본은 1라운드를 건너뛰고 2라운드만 돈다(--round1 로 1라운드까지).
 """
 from __future__ import annotations
 
