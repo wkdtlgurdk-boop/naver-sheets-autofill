@@ -76,6 +76,13 @@ class Streaks(unittest.TestCase):
         c = group("반도체 소재·장비", ("x", 9), ("w", 8))
         self.assertTrue(ts.same_theme(a, b))
         self.assertFalse(ts.same_theme(a, c))
+        # 첫 마디가 구체적이면 종목이 안 겹쳐도 같은 테마 (9/21·9/22 PCB).
+        d = group("반도체 기판·PCB(FC-BGA/SOCAMM)", ("q", 9), ("r", 8))
+        self.assertTrue(ts.same_theme(a, d))
+        # '반도체' 한 마디로는 부족하다.
+        e = group("반도체·IT 대표주", ("q", 9))
+        f = group("반도체·HBM", ("r", 9))
+        self.assertFalse(ts.same_theme(e, f))
 
     def test_휴장일_블록은_뺀다(self):
         days = {D[0]: [group("원전", ("a", 9))], date(2026, 9, 24): [group("원전", ("a", 9))]}

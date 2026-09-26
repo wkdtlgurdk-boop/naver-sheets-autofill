@@ -51,6 +51,7 @@ DAILY_ID = "1xq_WNQh04xV1UsLm9ZRL6HhkQIJn-34G41zm87oR2h4"
 SEARCH_ROWS = 700
 MAX_STOCKS = 15
 OVERLAP = 2          # 종목이 이만큼 겹치면 같은 테마
+HEAD_SPECIFIC = 4    # 첫 마디가 이만큼 길면 그것만으로 같은 테마
 HORIZONS = (1, 3, 5)
 LIMIT_UP = 29.5      # 상한가로 보는 상승률
 
@@ -199,7 +200,13 @@ def same_theme(a: dict, b: dict) -> bool:
     shared = len(na & nb)
     if shared >= OVERLAP:
         return True
-    return shared >= 1 and head_word(a["keyword"]) == head_word(b["keyword"])
+    head = head_word(a["keyword"])
+    if head != head_word(b["keyword"]):
+        return False
+    # 첫 마디가 '반도체기판'처럼 구체적이면 그것만으로 같은 테마다. 9/21 과 9/22 의
+    # PCB 그룹은 겹치는 종목이 없었지만 같은 흐름이었다. '반도체'처럼 넓은 말은
+    # 소재·기판·HBM 을 다 품으므로 종목이 겹쳐야 묶는다.
+    return shared >= 1 or len(head) >= HEAD_SPECIFIC
 
 
 def link_streaks(days: dict[date, list[dict]], trading: list[date]) -> list[dict]:
