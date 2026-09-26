@@ -24,6 +24,8 @@ import time
 import urllib.request
 from pathlib import Path
 
+from theme_fit import load_affinity, misfit
+
 HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Referer": "https://m.stock.naver.com/",
@@ -521,7 +523,7 @@ def apply_keyword_overrides(auto_groups):
     return final
 
 
-def build_output(final_groups):
+def build_output(final_groups, affinity=None):
     """Pick each group's five stocks, giving no stock to two groups.
 
     Themes overlap at the stock level even after merging: 서진시스템 belongs to
@@ -556,11 +558,21 @@ def build_output(final_groups):
 
     pools.sort(key=lambda p: -max((s["rate"] for s in p["ranked"]), default=0))
 
+    # 1년치 시트 기록으로 본 오배정. 삼성전자가 반도체로 오른 날 '자율주행차'
+    # 칸의 대장주가 되는 것을 막는다(theme_fit 머리말). 빠진 종목은 제 계열
+    # 그룹이 뒤에서 가져갈 수 있다.
+    affinity = load_affinity() if affinity is None else affinity
+
     taken, out = set(), []
     for p in pools:
         top5 = []
         for s in p["ranked"]:
             if s["code"] in taken:
+                continue
+            why = misfit(s["name"], [p["keyword"]] + p["source_themes"], affinity)
+            if why:
+                print(f"[오배정] {p['keyword']} — {s['name']} {s['rate']:+.2f}% 뺌: {why}",
+                      file=sys.stderr)
                 continue
             taken.add(s["code"])
             top5.append(s)

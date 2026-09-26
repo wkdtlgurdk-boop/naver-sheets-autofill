@@ -1,21 +1,18 @@
 name: theme-stats
 
-# 테마 지속성 통계. 평일 밤, 그날 테마 달력이 찬 뒤에 돈다.
-#
-# 날마다 도는 이유: 아침 봇이 읽는 current(오늘 테마가 몇 일차인가)는 그날
-# 블록이 있어야 맞다. 봇은 통계 기준일이 테마 피드 기준일과 다르면 싣지 않으므로
-# 주간으로 돌리면 금요일 것만 쓰인다. 한 번에 2분쯤이다.
+# 테마 지속성 통계와 오배정 기록. 금요일 밤, 그 주 테마 달력이 다 찬 뒤에 돈다.
 #
 # 22:40 KST (13:40 UTC). theme-calendar 의 마지막 회차가 22:10 이고 보통 5~13분
 # 늦게 끝나므로 그 뒤에 둔다. 정각을 피하는 이유는 theme-calendar.yml 주석과 같다.
 #
-# 결과는 theme_bot 의 feed/stats/ 로 간다. 아침 매수 후보 봇이 latest.json 의
-# current 를 읽어 '이 테마는 N일차, 과거 N일차 대장주의 다음날 성적'을 알림에
-# 붙인다. 사람이 보는 표는 report.md 와 이 실행의 요약 화면에 있다.
+# 두 가지를 남긴다.
+#   report.md / latest.json   사람이 읽는 통계. 요약 화면과 theme_bot feed/stats/
+#   affinity.json             종목별 과거 키워드 기록. 이 저장소에 커밋해서
+#                             theme_scan 의 오배정 판정(theme_fit)이 다음 실행부터 쓴다.
 
 on:
   schedule:
-    - cron: "40 13 * * 1-5"
+    - cron: "40 13 * * 5"
   workflow_dispatch:
     inputs:
       days:
@@ -31,8 +28,9 @@ concurrency:
   group: theme-stats
   cancel-in-progress: false
 
+# affinity.json 을 되돌려 놓는다.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   stats:
@@ -49,14 +47,25 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Run logic tests
-        run: python test_theme_stats.py
+        run: python test_theme_stats.py && python test_theme_fit.py
 
       - name: 통계 계산
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: |
-          python theme_stats.py --out stats_out --days "${{ inputs.days || '0' }}"
+          python theme_stats.py --out stats_out --days "${{ inputs.days || '0' }}" --affinity affinity.json
           cat stats_out/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 오배정 기록을 커밋한다
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add affinity.json
+          git diff --cached --quiet && echo "no change" && exit 0
+          git commit -m "Refresh theme affinity ($(TZ=Asia/Seoul date +%Y-%m-%d))"
+          git pull --rebase --autostash origin master
+          git push origin HEAD:master
 
       - name: theme_bot 에 올린다
         if: ${{ inputs.dry_run != true }}

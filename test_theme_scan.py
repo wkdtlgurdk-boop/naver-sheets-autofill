@@ -13,6 +13,11 @@ import sys
 
 import theme_scan as ts
 
+# 오배정 판정(theme_fit)은 저장소의 affinity.json 을 읽는다. 여기 시험은 실제
+# 종목명으로 배정 순서를 보므로, 그 기록이 끼어들지 않게 비워 둔다. 오배정
+# 자체는 test_theme_fit.py 가 본다.
+ts.load_affinity = lambda: {}
+
 failures: list[str] = []
 
 
