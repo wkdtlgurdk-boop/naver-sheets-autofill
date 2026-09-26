@@ -87,6 +87,33 @@ def fetch(req) -> tuple[int, object]:
         return -1, repr(e)
 
 
+DAUM = {
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://finance.daum.net/quotes/A005930",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+}
+# 2라운드: 1라운드에서 네이버에는 공매도 경로가 없고 KRX 는 로그인을 요구했다
+# ('LOGOUT'). 다음 후보들.
+ROUND2 = [
+    ("daum", "https://finance.daum.net/api/quote/A005930/short_sellings?page=1&perPage=5"),
+    ("daum", "https://finance.daum.net/api/quote/A005930/short_selling?page=1&perPage=5"),
+    ("daum", "https://finance.daum.net/api/investor/short_selling?page=1&perPage=5"),
+    ("daum", "https://finance.daum.net/api/quote/A005930/lending?page=1&perPage=5"),
+    ("daum", "https://finance.daum.net/api/quotes/A005930?summary=false&changeStatistics=true"),
+    ("naver", "https://finance.naver.com/item/short_trade.naver?code=005930"),
+    ("naver", "https://m.stock.naver.com/api/stock/005930/shortSellingInfo"),
+    ("naver", "https://m.stock.naver.com/api/stock/005930/lendingBalance"),
+    ("krx", "https://data-dbg.krx.co.kr/svc/apis/sto/stk_bydd_trd?basDd=20260923"),
+]
+for kind, url in ROUND2:
+    hdr = {"daum": DAUM, "naver": NAVER, "krx": {"User-Agent": "Mozilla/5.0"}}[kind]
+    show(url, *fetch(urllib.request.Request(url, headers=hdr)))
+
+import sys
+if "--round1" not in sys.argv:
+    raise SystemExit(0)
+
 for url in GETS:
     show(url, *fetch(urllib.request.Request(url, headers=NAVER)))
 

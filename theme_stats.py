@@ -179,12 +179,27 @@ def norm_keyword(text: str) -> str:
     return re.sub(r"\s+", "", re.sub(r"\(.*?\)", "", text or ""))
 
 
+def head_word(text: str) -> str:
+    """이름의 첫 마디. '반도체 기판·AI PCB' -> '반도체기판'."""
+    return norm_keyword(re.split(r"[·/]", text or "")[0])
+
+
 def same_theme(a: dict, b: dict) -> bool:
+    """이름이 같거나, 종목이 OVERLAP 개 넘게 겹치거나, 첫 마디가 같고 한 종목이라도
+    겹치면 같은 테마.
+
+    셋째 규칙은 9/21 '반도체 기판·AI PCB' 와 9/22 '반도체 기판·PCB(FC-BGA/SOCAMM)'
+    때문이다. 종목은 하나만 겹쳤지만 같은 테마다. 첫 마디만으로 묶으면 '반도체
+    소재' 와 '반도체 기판' 이 갈리지 않으므로 겹치는 종목도 요구한다.
+    """
     if norm_keyword(a["keyword"]) == norm_keyword(b["keyword"]):
         return True
     na = {s["name"] for s in a["stocks"]}
     nb = {s["name"] for s in b["stocks"]}
-    return len(na & nb) >= OVERLAP
+    shared = len(na & nb)
+    if shared >= OVERLAP:
+        return True
+    return shared >= 1 and head_word(a["keyword"]) == head_word(b["keyword"])
 
 
 def link_streaks(days: dict[date, list[dict]], trading: list[date]) -> list[dict]:
@@ -220,6 +235,19 @@ def link_streaks(days: dict[date, list[dict]], trading: list[date]) -> list[dict
         rows.extend(today_rows)
         prev_day, prev_rows = day, today_rows
     return rows
+
+
+def only_trading(days: dict[date, list[dict]], trading: list[date]) -> dict[date, list[dict]]:
+    """장이 안 선 날의 블록을 뺀다.
+
+    휴장일 관문이 붙기 전에는 파이프라인이 추석(9/24·25)에도 돌아 전날 것과
+    같은 블록을 적었다. 그대로 세면 같은 테마가 사흘 연속 나온 것이 된다.
+    일봉이 하나도 없으면(네트워크 실패) 거를 근거가 없으므로 그대로 둔다.
+    """
+    if not trading:
+        return days
+    opened = set(trading)
+    return {d: g for d, g in days.items() if d in opened}
 
 
 # ---------------------------------------------------------------- 수익률
@@ -383,6 +411,7 @@ def current(rows: list[dict], by_streak: dict) -> list[dict]:
 def build(days: dict[date, list[dict]], bars_by_code: dict[str, list[dict]],
           code_map: dict[str, str], generated_at: str) -> dict:
     trading = sorted({b["date"] for bars in bars_by_code.values() for b in bars})
+    days = only_trading(days, trading)
     rows = link_streaks(days, trading)
     attach_outcomes(rows, bars_by_code, code_map)
     by_streak = bucket_stats(rows, streak_bucket)

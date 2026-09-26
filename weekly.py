@@ -293,6 +293,11 @@ def main() -> int:
     names = {s["name"] for gs in days.values() for g in gs for s in g["stocks"]}
     bars = {c: st.fetch_bars(c, monday - timedelta(days=10), friday)
             for c in sorted({code_map[n] for n in names if n in code_map})}
+    trading = sorted({b["date"] for bs in bars.values() for b in bs})
+    closed = sorted(set(days) - set(st.only_trading(days, trading)))
+    if closed:
+        print(f"  장이 안 선 날의 블록은 뺍니다: {', '.join(map(str, closed))}")
+    days = st.only_trading(days, trading)
     summary = summarize_week(days, bars, code_map, monday, friday)
     for t in summary["themes"]:
         print(f"  [{t['keyword']}] {t['days']}일 {_rate(t['week_return'])} (대장 {t['leader']})")

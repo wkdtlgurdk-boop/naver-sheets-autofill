@@ -70,6 +70,18 @@ class Streaks(unittest.TestCase):
         self.assertEqual([r["continued"] for r in rows], [True, False, None])
         self.assertEqual(rows[0]["lineage"], rows[1]["lineage"])
 
+    def test_첫_마디가_같고_한_종목_겹치면_같은_테마(self):
+        a = group("반도체 기판·AI PCB", ("x", 9), ("y", 8))
+        b = group("반도체 기판·PCB(FC-BGA/SOCAMM)", ("x", 9), ("z", 8))
+        c = group("반도체 소재·장비", ("x", 9), ("w", 8))
+        self.assertTrue(ts.same_theme(a, b))
+        self.assertFalse(ts.same_theme(a, c))
+
+    def test_휴장일_블록은_뺀다(self):
+        days = {D[0]: [group("원전", ("a", 9))], date(2026, 9, 24): [group("원전", ("a", 9))]}
+        self.assertEqual(list(ts.only_trading(days, D)), [D[0]])
+        self.assertEqual(len(ts.only_trading(days, [])), 2)
+
     def test_시트에_빠진_거래일이_있으면_끊는다(self):
         days = {D[0]: [group("원전", ("a", 9))], D[2]: [group("원전", ("a", 9))]}
         rows = ts.link_streaks(days, D)
