@@ -62,6 +62,47 @@ class BuildOutput(unittest.TestCase):
         self.assertIn("삼성전자", out["반도체"])
 
 
+
+def theme(name, members, *stocks):
+    return {"theme_name": name, "member_count": members,
+            "qualifying": [stock(n, c, r) for n, c, r in stocks]}
+
+
+class NarrowFirst(unittest.TestCase):
+    def test_좁은_테마_종목을_먼저_채운다(self):
+        # 2026-09-28 의료AI·의료기기: 바이오 랠리로 더 오른 의료기기 종목이
+        # 의료AI 종목을 밀어냈다.
+        groups = [{"keyword": "의료AI·의료기기", "themes": [
+            theme("의료AI", 25, ("뷰노", "1", 29.98), ("쓰리빌리언", "2", 23.97),
+                  ("셀바스헬스케어", "3", 15.57), ("루닛", "4", 14.48), ("딥노이드", "5", 12.4)),
+            theme("의료기기", 110, ("한국비엔씨", "6", 29.98), ("레메디", "7", 23.08),
+                  ("동국생명과학", "8", 18.21), ("뷰노", "1", 29.98)),
+        ]}]
+        top = ts.build_output(groups, {})[0]["top5"]
+        self.assertEqual([s["name"] for s in top],
+                         ["뷰노", "쓰리빌리언", "셀바스헬스케어", "루닛", "딥노이드"])
+
+    def test_좁은_쪽이_모자라면_넓은_쪽으로_채운다(self):
+        groups = [{"keyword": "의료AI·의료기기", "themes": [
+            theme("의료AI", 25, ("뷰노", "1", 29.98), ("루닛", "4", 14.48)),
+            theme("의료기기", 110, ("한국비엔씨", "6", 29.98), ("레메디", "7", 23.08),
+                  ("동국생명과학", "8", 18.21), ("메디아나", "9", 8.0)),
+        ]}]
+        top = ts.build_output(groups, {})[0]["top5"]
+        # 좁은 쪽 둘 + 넓은 쪽 상위 셋, 적는 순서는 상승률 순.
+        self.assertEqual([s["name"] for s in top],
+                         ["뷰노", "한국비엔씨", "레메디", "동국생명과학", "루닛"])
+
+    def test_같은_테마의_갈래는_먼저_채우지_않는다(self):
+        groups = [{"keyword": "2차전지", "themes": [
+            theme("2차전지(전고체)", 20, ("전고체주", "1", 6.0)),
+            theme("2차전지", 128, ("대장주", "2", 15.0), ("둘째", "3", 11.0),
+                  ("셋째", "4", 8.0), ("넷째", "5", 7.0), ("다섯째", "6", 6.5)),
+        ]}]
+        top = ts.build_output(groups, {})[0]["top5"]
+        self.assertNotIn("전고체주", [s["name"] for s in top])
+
+
 if __name__ == "__main__":
     result = unittest.main(verbosity=1, exit=False).result
     sys.exit(0 if result.wasSuccessful() else 1)
