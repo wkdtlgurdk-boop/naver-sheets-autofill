@@ -580,6 +580,12 @@ def build_output(final_groups, affinity=None):
                 member_map[s["code"]] = s
         # 좁은 테마 종목을 먼저, 그 안에서 상승률 순 (core_codes 머리말).
         core = core_codes(g["themes"])
+        if len(g["themes"]) > 1:
+            sizes = ", ".join(f"{t['theme_name']} {t.get('member_count')}종목/조건 {len(t['qualifying'])}"
+                              for t in g["themes"])
+            print(f"[좁은테마] {g['keyword']} — {sizes}; 먼저 채울 {len(core)}개: "
+                  + ", ".join(s["name"] for s in stock_map.values() if s["code"] in core),
+                  file=sys.stderr)
         pools.append({
             "keyword": g["keyword"],
             "source_themes": sorted(set(source_names)),
