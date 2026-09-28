@@ -523,6 +523,36 @@ def apply_keyword_overrides(auto_groups):
     return final
 
 
+NARROW_RATIO = 0.5   # 구성종목이 가장 큰 테마의 이 비율 이하면 '좁은 테마'
+
+
+def _base_name(theme_name):
+    return re.sub(r"\([^)]*\)", "", theme_name or "").strip()
+
+
+def core_codes(themes):
+    """병합된 그룹에서 먼저 채울 종목 -- 좁은 테마에서 조건을 넘은 종목들.
+
+    2026-09-28 '의료AI·의료기기' 는 의료AI(좁다)와 의료기기(110종목)를 합친
+    그룹이었다. 상승률 순으로만 다섯을 뽑으니 HLB 신약 허가로 바이오가 통째로
+    뜬 날 한국비엔씨·동국생명과학·레메디가 자리를 차지했고, 같은 날 오른
+    루닛·셀바스헬스케어·딥노이드는 빠졌다. 그룹 이름이 말하는 것은 좁은 쪽이다.
+
+    좁은 테마 = 구성종목이 가장 큰 테마의 NARROW_RATIO 이하이고, 괄호를 뗀
+    이름이 그 큰 테마와 다른 것. '2차전지(전고체)' 는 '2차전지' 의 갈래라
+    좁아도 먼저 채우지 않는다 -- 그랬다가는 전고체 종목이 더 크게 오른
+    2차전지 대장주를 밀어낸다.
+    """
+    sized = [t for t in themes if t.get("member_count")]
+    if len(sized) < 2:
+        return set()
+    broad = max(sized, key=lambda t: t["member_count"])
+    narrow = [t for t in sized
+              if t["member_count"] <= broad["member_count"] * NARROW_RATIO
+              and _base_name(t["theme_name"]) != _base_name(broad["theme_name"])]
+    return {s["code"] for t in narrow for s in t["qualifying"]}
+
+
 def build_output(final_groups, affinity=None):
     """Pick each group's five stocks, giving no stock to two groups.
 
@@ -548,12 +578,15 @@ def build_output(final_groups, affinity=None):
             # 테마라면 어느 쪽 소속이든 같은 키워드 아래 있는 것이 맞다.
             for s in t.get("members") or []:
                 member_map[s["code"]] = s
+        # 좁은 테마 종목을 먼저, 그 안에서 상승률 순 (core_codes 머리말).
+        core = core_codes(g["themes"])
         pools.append({
             "keyword": g["keyword"],
             "source_themes": sorted(set(source_names)),
             "total_qualifying": len(stock_map),
             "members": sorted(member_map.values(), key=lambda s: -s["rate"]),
-            "ranked": sorted(stock_map.values(), key=lambda s: -s["rate"]),
+            "ranked": sorted(stock_map.values(),
+                             key=lambda s: (s["code"] not in core, -s["rate"])),
         })
 
     pools.sort(key=lambda p: -max((s["rate"] for s in p["ranked"]), default=0))
@@ -598,7 +631,8 @@ def build_output(final_groups, affinity=None):
             # 봇은 '소속인가'를 물어야 해서 전부가 필요하다.
             "members": [{"name": s["name"], "code": s["code"], "rate": s["rate"]}
                         for s in p["members"]],
-            "top5": top5,
+            # 뽑는 순서는 좁은 테마 먼저지만, 시트와 카드에는 상승률 순으로 적는다.
+            "top5": sorted(top5, key=lambda s: -s["rate"]),
         })
     return out
 
