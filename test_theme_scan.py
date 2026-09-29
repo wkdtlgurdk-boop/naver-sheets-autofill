@@ -290,6 +290,38 @@ def test_scan_fetches_every_theme_it_listed():
     check("둘 다 결과에", [t["theme_name"] for t in out], ["평균낮음", "평균높음"])
 
 
+def test_custom_theme_replaces_naver_theme():
+    """직접 만든 'OLED' 가 네이버 'OLED(유기 발광 다이오드)' 를 대신한다.
+
+    시세는 다른 네이버 테마에서 본 것을 쓴다.
+    """
+    rows = [listed(1, "OLED(유기 발광 다이오드)"), listed(2, "디스플레이 부품")]
+
+    def fake_stocks(no):
+        if no == 1:
+            return [{"name": f"반도체{i}", "code": f"9{i:05d}", "rate": 9.0,
+                     "cap": 5000, "amount": 50_000} for i in range(5)]
+        return [{"name": n, "code": f"{i:06d}", "rate": 8.0, "cap": 5000,
+                 "amount": 50_000} for i, n in enumerate(["덕산네오룩스", "야스", "AP시스템"])]
+
+    real = (ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes)
+    ts.fetch_theme_list = lambda: rows
+    ts.fetch_theme_stocks = fake_stocks
+    ts.time.sleep = lambda _s: None
+    ts.load_custom_themes = lambda: [{"name": "OLED",
+                                      "stocks": ["덕산네오룩스", "야스", "AP시스템", "없는종목"]}]
+    try:
+        out = ts.scan_themes()
+    finally:
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes = real
+    names = [t["theme_name"] for t in out]
+    check("네이버 OLED 는 빠짐", "OLED(유기 발광 다이오드)" in names, False)
+    custom = [t for t in out if t["theme_name"] == "OLED"]
+    check("직접 테마가 들어옴", len(custom), 1)
+    check("찾은 종목만 구성", custom[0]["member_count"], 3)
+    check("조건 충족", len(custom[0]["qualifying"]), 3)
+
+
 def test_numbers_come_out_of_naver_strings():
     """네이버는 숫자를 '15,130' 같은 문자열로 준다."""
     check("쉼표", ts.num("15,130"), 15130.0)

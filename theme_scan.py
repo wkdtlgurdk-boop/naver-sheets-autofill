@@ -403,6 +403,50 @@ def fetch_theme_stocks(theme_no):
     return out
 
 
+CUSTOM_FILE = Path(__file__).with_name("custom_themes.json")
+
+
+def load_custom_themes(path=None):
+    """custom_themes.json 의 테마 목록. 없거나 깨졌으면 빈 목록."""
+    try:
+        doc = json.loads((path or CUSTOM_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [t for t in doc.get("themes") or [] if t.get("name") and t.get("stocks")]
+
+
+def _base(name):
+    return re.sub(r"\([^)]*\)", "", name or "").strip().lower()
+
+
+def custom_theme_entries(custom, seen):
+    """직접 만든 테마를 네이버 테마와 같은 모양으로. seen 은 {종목명: 시세}.
+
+    시세는 따로 받지 않는다 -- 스캔이 네이버 테마 266개를 읽으며 이미 본
+    종목에서 꺼낸다. 어느 네이버 테마에도 없는 종목은 못 찾은 것으로 찍는다.
+    """
+    out = []
+    for t in custom:
+        stocks = [seen[n] for n in t["stocks"] if n in seen]
+        missing = [n for n in t["stocks"] if n not in seen]
+        if missing:
+            print(f"[직접테마] {t['name']} — 시세를 못 찾은 종목: {', '.join(missing)}",
+                  file=sys.stderr)
+        qualifying = [s for s in stocks if qualifies(s["rate"], s["cap"], s.get("amount"))]
+        if len(qualifying) < MIN_COUNT:
+            continue
+        out.append({
+            "theme_name": t["name"],
+            "theme_id": "custom:" + t["name"],
+            "member_count": len(stocks),
+            "members": stocks,
+            "up_count": sum(1 for s in stocks if s["rate"] >= PARTICIPATION_RATE),
+            "avg_rate": round(sum(s["rate"] for s in stocks) / len(stocks), 2) if stocks else None,
+            "qualifying": qualifying,
+        })
+    return out
+
+
 def scan_themes():
     themes = fetch_theme_list()
     print(f"themes listed: {len(themes)}", file=sys.stderr)
@@ -413,10 +457,19 @@ def scan_themes():
             "[중단] 테마 목록이 0개입니다. 네이버가 예상과 다른 응답을 줬습니다 "
             "(점검·차단·API 변경). 스캔을 신뢰할 수 없어 멈춥니다.")
 
+    # 직접 만든 테마가 대신하는 네이버 테마는 건너뛴다 (custom_themes.json).
+    custom = load_custom_themes()
+    replaced = {_base(t["name"]) for t in custom}
+    seen = {}
     results = []
     for t in themes:
         name = t.get("name") or str(t.get("no"))
         stocks = fetch_theme_stocks(t["no"])
+        for s in stocks:
+            seen.setdefault(s["name"], s)
+        if _base(name) in replaced:
+            print(f"[직접테마] 네이버 '{name}' 는 직접 만든 테마로 대신합니다", file=sys.stderr)
+            continue
         qualifying = [s for s in stocks
                       if qualifies(s["rate"], s["cap"], s.get("amount"))]
         if len(qualifying) >= MIN_COUNT:
@@ -438,6 +491,7 @@ def scan_themes():
                 "qualifying": qualifying,
             })
         time.sleep(0.12)
+    results += custom_theme_entries(custom, seen)
     return results
 
 
