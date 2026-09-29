@@ -82,6 +82,16 @@ class NarrowFirst(unittest.TestCase):
         self.assertEqual([s["name"] for s in top],
                          ["뷰노", "쓰리빌리언", "셀바스헬스케어", "루닛", "딥노이드"])
 
+    def test_좁은_쪽이_넉넉하면_넓은_쪽은_쓰지_않는다(self):
+        # 2026-09-28 재실행: 의료AI 넷, 남은 한 칸에 HLB 로 오른 한국비엔씨.
+        groups = [{"keyword": "의료AI·의료기기", "themes": [
+            theme("의료AI", 29, ("뷰노", "1", 29.98), ("쓰리빌리언", "2", 23.97),
+                  ("루닛", "4", 14.48), ("씨어스", "5", 10.18)),
+            theme("의료기기", 93, ("한국비엔씨", "6", 29.98), ("뷰노", "1", 29.98)),
+        ]}]
+        top = ts.build_output(groups, {})[0]["top5"]
+        self.assertEqual([s["name"] for s in top], ["뷰노", "쓰리빌리언", "루닛", "씨어스"])
+
     def test_좁은_쪽이_모자라면_넓은_쪽으로_채운다(self):
         groups = [{"keyword": "의료AI·의료기기", "themes": [
             theme("의료AI", 25, ("뷰노", "1", 29.98), ("루닛", "4", 14.48)),
