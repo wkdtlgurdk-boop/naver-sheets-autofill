@@ -52,6 +52,10 @@ on:
         description: "카드만 만들고 스레드에는 올리지 않음 (내용 확인용)"
         type: boolean
         default: false
+      scan_run:
+        description: "그 날 실행(run id)의 스캔 파일로 다시 묶는다 — 장중에 지난 날짜를 고칠 때 (as_of 와 함께)"
+        type: string
+        default: ""
 
 concurrency:
   group: theme-calendar
@@ -61,6 +65,7 @@ concurrency:
 # and editable in the repo rather than only in a log.
 permissions:
   contents: write
+  actions: read      # scan_run 으로 지난 실행의 스캔 파일을 받을 때
 
 jobs:
   # 대상일을 정하고, 그 날 일이 이미 끝났으면 여기서 멈춘다.
@@ -190,7 +195,20 @@ jobs:
       # are read -- ~80 themes and ~82 fetches, down from 266 and ~270 (67s
       # measured). Writes final_groups.json.
       - name: Scan themes
+        if: ${{ !inputs.scan_run }}
         run: python theme_scan.py
+
+      # 지난 날짜를 장중에 고칠 때. 스캔은 '지금 시세'를 읽으므로 9/29 장중에
+      # 9/28 을 다시 돌리면 9/29 시세가 9/28 블록에 들어간다. 그 날 실행이
+      # 남긴 raw_scan.json(그 날 종가)을 받아 묶기만 다시 한다.
+      - name: 그 날 스캔 파일을 받는다
+        if: ${{ inputs.scan_run }}
+        uses: actions/download-artifact@v4
+        with:
+          name: scan-${{ inputs.scan_run }}
+          run-id: ${{ inputs.scan_run }}
+          github-token: ${{ github.token }}
+          path: .
 
       # Ask Claude to group the day's themes and rewrite keywords.json. The
       # mechanical merge only sees which stocks moved today, so it splits
@@ -228,6 +246,7 @@ jobs:
       # 죽어도 0바이트 파일이 남아, 뒤 단계가 "파일은 있는데 JSON 이 아니다" 라는
       # 엉뚱한 오류로 죽는다.
       - name: Fetch index summary
+        if: ${{ !inputs.scan_run }}
         run: |
           python market_summary.py > /tmp/market_summary.json
           mv /tmp/market_summary.json market_summary.json

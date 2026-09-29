@@ -542,6 +542,11 @@ def core_codes(themes):
     이름이 그 큰 테마와 다른 것. '2차전지(전고체)' 는 '2차전지' 의 갈래라
     좁아도 먼저 채우지 않는다 -- 그랬다가는 전고체 종목이 더 크게 오른
     2차전지 대장주를 밀어낸다.
+
+    좁은 쪽 종목이 MIN_COUNT 이상이면 그 종목만 쓴다(칸이 비어도 둔다).
+    9/28 재실행에서 의료AI 종목은 넷뿐이었고, 남은 한 칸을 HLB 로 오른
+    한국비엔씨가 채웠다 -- 바로 걸러내려던 종목이다. 좁은 쪽이 MIN_COUNT
+    에 못 미치면 그때만 넓은 쪽으로 채운다.
     """
     sized = [t for t in themes if t.get("member_count")]
     if len(sized) < 2:
@@ -580,12 +585,19 @@ def build_output(final_groups, affinity=None):
                 member_map[s["code"]] = s
         # 좁은 테마 종목을 먼저, 그 안에서 상승률 순 (core_codes 머리말).
         core = core_codes(g["themes"])
+        if len(g["themes"]) > 1:
+            sizes = ", ".join(f"{t['theme_name']} {t.get('member_count')}종목/조건 {len(t['qualifying'])}"
+                              for t in g["themes"])
+            print(f"[좁은테마] {g['keyword']} — {sizes}; 먼저 채울 {len(core)}개: "
+                  + ", ".join(s["name"] for s in stock_map.values() if s["code"] in core),
+                  file=sys.stderr)
         pools.append({
             "keyword": g["keyword"],
             "source_themes": sorted(set(source_names)),
             "total_qualifying": len(stock_map),
             "members": sorted(member_map.values(), key=lambda s: -s["rate"]),
-            "ranked": sorted(stock_map.values(),
+            "ranked": sorted((s for s in stock_map.values()
+                              if len(core) < MIN_COUNT or s["code"] in core),
                              key=lambda s: (s["code"] not in core, -s["rate"])),
         })
 
