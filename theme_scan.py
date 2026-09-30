@@ -458,8 +458,11 @@ def scan_themes():
             "(점검·차단·API 변경). 스캔을 신뢰할 수 없어 멈춥니다.")
 
     # 직접 만든 테마가 대신하는 네이버 테마는 건너뛴다 (custom_themes.json).
+    # 괄호를 뗀 이름이 같거나, replaces 에 적은 글자가 이름에 들어 있으면 대신한다
+    # — '2차전지 소재'처럼 이름이 달라도 네이버 '2차전지(소재/부품)'를 밀어낼 수 있게.
     custom = load_custom_themes()
     replaced = {_base(t["name"]) for t in custom}
+    replace_parts = [p for t in custom for p in (t.get("replaces") or []) if p]
     seen = {}
     results = []
     for t in themes:
@@ -467,7 +470,7 @@ def scan_themes():
         stocks = fetch_theme_stocks(t["no"])
         for s in stocks:
             seen.setdefault(s["name"], s)
-        if _base(name) in replaced:
+        if _base(name) in replaced or any(p in name for p in replace_parts):
             print(f"[직접테마] 네이버 '{name}' 는 직접 만든 테마로 대신합니다", file=sys.stderr)
             continue
         qualifying = [s for s in stocks

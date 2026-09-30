@@ -322,6 +322,47 @@ def test_custom_theme_replaces_naver_theme():
     check("조건 충족", len(custom[0]["qualifying"]), 3)
 
 
+def test_custom_theme_replaces_by_part():
+    """replaces 에 '2차전지' 를 적으면 이름에 그 글자가 든 네이버 테마를 모두 대신한다."""
+    rows = [listed(1, "2차전지"), listed(2, "2차전지(소재/부품)"), listed(3, "2차전지(장비)"),
+            listed(4, "철강")]
+
+    def fake_stocks(no):
+        names = {1: ["에코프로", "TCC스틸"], 2: ["엘앤에프", "TCC스틸"], 3: ["피엔티", "엠플러스"],
+                 4: ["TCC스틸", "포스코스틸리온", "하이스틸"]}[no]
+        return [{"name": n, "code": f"{no}{i:05d}", "rate": 9.0, "cap": 5000,
+                 "amount": 50_000} for i, n in enumerate(names)]
+
+    real = (ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes)
+    ts.fetch_theme_list = lambda: rows
+    ts.fetch_theme_stocks = fake_stocks
+    ts.time.sleep = lambda _s: None
+    ts.load_custom_themes = lambda: [
+        {"name": "2차전지 소재", "replaces": ["2차전지"], "stocks": ["에코프로", "엘앤에프", "피엔티"]}]
+    real_min, ts.MIN_COUNT = ts.MIN_COUNT, 2
+    try:
+        out = ts.scan_themes()
+    finally:
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes = real
+        ts.MIN_COUNT = real_min
+    names = [t["theme_name"] for t in out]
+    check("네이버 2차전지 셋 다 빠짐", [n for n in names if n.startswith("2차전지(") or n == "2차전지"], [])
+    check("철강은 그대로", "철강" in names, True)
+    custom = [t for t in out if t["theme_name"] == "2차전지 소재"][0]
+    check("직접 고른 종목만", sorted(s["name"] for s in custom["members"]), ["에코프로", "엘앤에프", "피엔티"])
+    check("TCC스틸 없음", "TCC스틸" in [s["name"] for s in custom["members"]], False)
+
+
+def test_real_custom_file_is_well_formed():
+    themes = ts.load_custom_themes()
+    names = [t["name"] for t in themes]
+    for n in ("2차전지 셀", "2차전지 소재", "2차전지 장비"):
+        check(f"{n} 있음", n in names, True)
+    all_stocks = [s for t in themes if t["name"].startswith("2차전지") for s in t["stocks"]]
+    check("2차전지 테마에 TCC스틸 없음", "TCC스틸" in all_stocks, False)
+    check("세 테마끼리 종목이 안 겹친다", len(all_stocks), len(set(all_stocks)))
+
+
 def test_numbers_come_out_of_naver_strings():
     """네이버는 숫자를 '15,130' 같은 문자열로 준다."""
     check("쉼표", ts.num("15,130"), 15130.0)
