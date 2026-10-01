@@ -290,6 +290,52 @@ def test_scan_fetches_every_theme_it_listed():
     check("둘 다 결과에", [t["theme_name"] for t in out], ["평균낮음", "평균높음"])
 
 
+def test_new_listing_is_dropped_from_every_theme():
+    """신규상장 명단(네이버 '2026 하반기 신규상장')에 든 종목은 어느 테마에서도 빠진다.
+
+    2026-10-01 브릴스(+59%)가 로봇 칸 1위로 올랐다. 명단 테마 자체는
+    exclusions.json 이 빼고, 그 안의 종목은 여기서 빠진다. 작년보다 오래된
+    명단은 신규로 보지 않는다.
+    """
+    rows = [listed(1, "로봇"), listed(2, "2026 하반기 신규상장"),
+            listed(3, "2023 상반기 신규상장")]
+
+    def fake_stocks(no):
+        if no == 2:
+            return [{"name": "브릴스", "code": "468670", "rate": 59.0,
+                     "cap": 3000, "amount": 600_000}]
+        if no == 3:
+            return [{"name": "로봇1", "code": "000001", "rate": 9.0,
+                     "cap": 5000, "amount": 50_000}]
+        return [{"name": n, "code": c, "rate": r, "cap": 5000, "amount": 50_000}
+                for n, c, r in [("브릴스", "468670", 59.0), ("로봇1", "000001", 9.0),
+                                ("로봇2", "000002", 8.0), ("로봇3", "000003", 7.0)]]
+
+    real = (ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes)
+    ts.fetch_theme_list = lambda: rows
+    ts.fetch_theme_stocks = fake_stocks
+    ts.time.sleep = lambda _s: None
+    ts.load_custom_themes = lambda: []
+    try:
+        out = ts.scan_themes()
+    finally:
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes = real
+    robot = [t for t in out if t["theme_name"] == "로봇"]
+    kept = ts.filter_themes(robot, exclusions={"themes": [], "keywords": [], "stocks": []},
+                            patterns={})
+    check("브릴스는 빠지고 세 종목", [s["name"] for s in kept[0]["qualifying"]],
+          ["로봇1", "로봇2", "로봇3"])
+    check("구성 명단에는 남는다", len(robot[0]["members"]), 4)
+
+
+def test_recent_listing_theme_window():
+    check("올해", ts.is_recent_listing_theme("2026 하반기 신규상장", 2026), True)
+    check("작년", ts.is_recent_listing_theme("2025 상반기 신규상장", 2026), True)
+    check("재작년은 아님", ts.is_recent_listing_theme("2024 하반기 신규상장", 2026), False)
+    check("연도 없음", ts.is_recent_listing_theme("신규상장", 2026), True)
+    check("다른 테마", ts.is_recent_listing_theme("로봇", 2026), False)
+
+
 def test_custom_theme_replaces_naver_theme():
     """직접 만든 'OLED' 가 네이버 'OLED(유기 발광 다이오드)' 를 대신한다.
 
