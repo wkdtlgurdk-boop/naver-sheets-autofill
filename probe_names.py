@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
-"""일회용 진단 (2026-10-01). 직접테마 종목 중 시세를 못 찾은 이름의 네이버 표기·코드를 찾는다.
+"""일회용 진단 (2026-10-01). 종목코드 하나로 등락률·시총·거래대금을 주는 경로를 찾는다.
 
-custom_themes.json 은 네이버 테마에서 본 종목의 시세만 쓴다. 어느 네이버 테마에도
-없는 종목이거나 이름이 다르면 '[직접테마] 시세를 못 찾은 종목' 에 찍힌다.
-검색 자동완성으로 표기와 코드를 찾고, 코드로 종목 기본 시세가 오는지 본다.
+직접테마 종목 중 어느 네이버 테마에도 없는 것(이브이첨단소재 등)은 테마 스캔에서
+시세를 못 얻는다. basic 경로는 등락률은 주지만 시총·거래대금이 없다.
 """
 import json
-import urllib.parse
 import urllib.request
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com/"}
-NAMES = ["이브이첨단소재", "중앙첨단소재", "대진첨단소재", "씨아이에스", "유일에너테크",
-         "코윈테크", "제일엠앤에스", "디이엔티",
-         "덕산데코피아", "일진디스플레이", "케이피에스"]
 
 
 def get(url):
@@ -21,25 +16,21 @@ def get(url):
         return json.loads(resp.read().decode("utf-8"))
 
 
-for name in NAMES:
-    q = urllib.parse.quote(name)
-    for url in (f"https://ac.stock.naver.com/ac?q={q}&target=stock",
-                f"https://m.stock.naver.com/front-api/search/autoComplete?query={q}&target=stock"):
+for code in ("131400", "005930"):
+    for path in ("integration", "basic", "price?pageSize=1&page=1"):
+        url = f"https://m.stock.naver.com/api/stock/{code}/{path}"
         try:
             doc = get(url)
         except Exception as exc:
-            print(f"{name} | {url.split('?')[0]} 실패 {exc}")
+            print(f"{code} {path} 실패 {exc}")
             continue
-        items = doc.get("items") or (doc.get("result") or {}).get("items") or []
-        hits = [(i.get("name"), i.get("code"), i.get("typeCode") or i.get("category"))
-                for i in items[:4]] if isinstance(items, list) else items
-        print(f"{name} | {url.split('?')[0]} -> {hits}")
-        if hits and isinstance(hits, list) and hits[0][1]:
-            code = hits[0][1]
-            try:
-                b = get(f"https://m.stock.naver.com/api/stock/{code}/basic")
-                print(f"   basic {code}: stockName={b.get('stockName')} "
-                      f"keys={sorted(b)[:30]}")
-            except Exception as exc:
-                print(f"   basic {code} 실패 {exc}")
-        break
+        if isinstance(doc, dict):
+            print(f"{code} {path} keys={sorted(doc)}")
+            for k in ("totalInfos", "dealTrendInfos"):
+                if isinstance(doc.get(k), list):
+                    print("   ", k, [(i.get("code"), i.get("key"), i.get("value")) for i in doc[k][:20]])
+        else:
+            print(f"{code} {path} list len={len(doc)} first={json.dumps(doc[0], ensure_ascii=False)[:400] if doc else None}")
+# 테마 종목 목록 한 행의 키 (비교용)
+d = get("https://m.stock.naver.com/api/stocks/theme/64?page=1&pageSize=1")
+print("theme row keys", sorted((d.get("stocks") or [{}])[0]))
