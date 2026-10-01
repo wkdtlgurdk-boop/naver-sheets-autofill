@@ -46,6 +46,10 @@ PAGE_SIZE = 100        # 한 페이지에 받는 테마 수 (등락률 내림차
 # 상장 직후 수급으로 오른 것을 로봇 테마 1위로 올렸다. 상장 시기를 따로 받는
 # 대신 네이버가 이미 만들어 두는 '2026 하반기 신규상장' 같은 테마 명단을 쓴다
 # — 스캔이 어차피 전 테마를 읽으므로 호출이 늘지 않는다. 올해와 작년 것만.
+# 하루 30% 넘게 오른 종목은 받지 않는다 (2026-10-01 사용자 지정). 가격제한폭이
+# ±30% 라 상한가는 +30.00% 까지다 — 그보다 더 오른 것은 상장 첫날·거래 재개
+# 처럼 제한폭이 없는 날이고, 테마가 움직인 것이 아니다 (브릴스 +59.49%).
+MAX_RATE = 30.0
 NEW_LISTING_TAG = "신규상장"
 NEW_LISTING_YEARS = 2
 PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
@@ -346,6 +350,8 @@ def qualifies(rate, cap, amount=None):
     반응한 곳이므로, 그 구간에서만 시총을 낮춰 센다.
     """
     if amount is not None and amount < MIN_AMOUNT:
+        return False
+    if rate > MAX_RATE:
         return False
     if rate >= SURGE_RATE and cap >= SURGE_CAP:
         return True

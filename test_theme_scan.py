@@ -308,7 +308,7 @@ def test_new_listing_is_dropped_from_every_theme():
             return [{"name": "로봇1", "code": "000001", "rate": 9.0,
                      "cap": 5000, "amount": 50_000}]
         return [{"name": n, "code": c, "rate": r, "cap": 5000, "amount": 50_000}
-                for n, c, r in [("브릴스", "468670", 59.0), ("로봇1", "000001", 9.0),
+                for n, c, r in [("브릴스", "468670", 25.0), ("로봇1", "000001", 9.0),
                                 ("로봇2", "000002", 8.0), ("로봇3", "000003", 7.0)]]
 
     real = (ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes)
@@ -326,6 +326,12 @@ def test_new_listing_is_dropped_from_every_theme():
     check("브릴스는 빠지고 세 종목", [s["name"] for s in kept[0]["qualifying"]],
           ["로봇1", "로봇2", "로봇3"])
     check("구성 명단에는 남는다", len(robot[0]["members"]), 4)
+
+
+def test_over_thirty_percent_never_qualifies():
+    """상한가(+30.00%)는 받고 그 위(상장 첫날 등)는 받지 않는다."""
+    check("상한가는 받음", ts.qualifies(30.0, 4102, 50_000), True)
+    check("+59% 는 안 받음", ts.qualifies(59.49, 3000, 695_824), False)
 
 
 def test_recent_listing_theme_window():
