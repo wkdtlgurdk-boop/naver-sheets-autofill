@@ -403,6 +403,34 @@ def fetch_theme_stocks(theme_no):
     return out
 
 
+def eok(text):
+    """'1,604조 8,035억' / '456억' / '-' -> 억원(float). 못 읽으면 None."""
+    text = str(text or "").replace(",", "").replace(" ", "")
+    m = re.fullmatch(r"(?:(\d+(?:\.\d+)?)조)?(?:(\d+(?:\.\d+)?)억)?", text)
+    if not text or not m or not (m.group(1) or m.group(2)):
+        return None
+    return float(m.group(1) or 0) * 10000 + float(m.group(2) or 0)
+
+
+def fetch_stock_by_code(code):
+    """테마에 안 속한 종목 하나의 시세를 코드로. 테마 행과 같은 모양·단위.
+
+    basic 이 등락률을, integration 의 totalInfos 가 시총·거래대금을 글자로 준다
+    (2026-10-01 러너 실측: '대금' '5조 6,097억', '시총' '456억'). 시총은 억원,
+    거래대금은 테마 행과 맞춰 백만원으로 바꾼다. 하나라도 못 읽으면 None.
+    """
+    basic = fetch_json(f"https://m.stock.naver.com/api/stock/{code}/basic")
+    info = fetch_json(f"https://m.stock.naver.com/api/stock/{code}/integration")
+    rows = {i.get("code"): i.get("value") for i in info.get("totalInfos") or []}
+    rate = num(basic.get("fluctuationsRatio"))
+    cap = eok(rows.get("marketValue"))
+    amount = eok(rows.get("accumulatedTradingValue"))
+    if rate is None or cap is None:
+        return None
+    return {"name": basic.get("stockName") or info.get("stockName") or code, "code": code,
+            "rate": rate, "cap": int(cap), "amount": int((amount or 0) * 100)}
+
+
 CUSTOM_FILE = Path(__file__).with_name("custom_themes.json")
 
 
@@ -419,14 +447,28 @@ def _base(name):
     return re.sub(r"\([^)]*\)", "", name or "").strip().lower()
 
 
-def custom_theme_entries(custom, seen):
+def custom_theme_entries(custom, seen, fetch=None):
     """직접 만든 테마를 네이버 테마와 같은 모양으로. seen 은 {종목명: 시세}.
 
-    시세는 따로 받지 않는다 -- 스캔이 네이버 테마 266개를 읽으며 이미 본
-    종목에서 꺼낸다. 어느 네이버 테마에도 없는 종목은 못 찾은 것으로 찍는다.
+    시세는 먼저 스캔이 네이버 테마 266개를 읽으며 이미 본 종목에서 꺼낸다.
+    어느 네이버 테마에도 없는 종목은 테마의 codes 에 코드를 적어 두면 그 코드로
+    따로 받는다(fetch_stock_by_code, 종목당 두 번 호출). 그래도 없으면 못 찾은
+    것으로 찍는다.
     """
+    fetch = fetch or fetch_stock_by_code
     out = []
     for t in custom:
+        codes = t.get("codes") or {}
+        for n in t["stocks"]:
+            if n not in seen and codes.get(n):
+                try:
+                    got = fetch(codes[n])
+                except Exception as exc:                  # noqa: BLE001
+                    print(f"[직접테마] {n}({codes[n]}) 코드 조회 실패: {exc}", file=sys.stderr)
+                    got = None
+                if got:
+                    got["name"] = n
+                    seen[n] = got
         stocks = [seen[n] for n in t["stocks"] if n in seen]
         missing = [n for n in t["stocks"] if n not in seen]
         if missing:

@@ -363,6 +363,30 @@ def test_real_custom_file_is_well_formed():
     check("세 테마끼리 종목이 안 겹친다", len(all_stocks), len(set(all_stocks)))
 
 
+def test_custom_theme_fetches_unthemed_stock_by_code():
+    """어느 네이버 테마에도 없는 종목은 codes 의 코드로 따로 시세를 받는다."""
+    seen = {n: {"name": n, "code": f"{i:06d}", "rate": 8.0, "cap": 5000, "amount": 50_000}
+            for i, n in enumerate(["에코프로", "엘앤에프"])}
+    asked = []
+
+    def fake(code):
+        asked.append(code)
+        return {"name": "다른표기", "code": code, "rate": 9.0, "cap": 3000, "amount": 20_000}
+    out = ts.custom_theme_entries(
+        [{"name": "2차전지 소재", "stocks": ["에코프로", "엘앤에프", "중앙첨단소재", "없는종목"],
+          "codes": {"중앙첨단소재": "051980"}}], seen, fetch=fake)
+    check("코드 있는 것만 따로 조회", asked, ["051980"])
+    names = sorted(s["name"] for s in out[0]["members"])
+    check("목록의 이름으로 들어간다", names, ["에코프로", "엘앤에프", "중앙첨단소재"])
+
+
+def test_eok_reads_korean_amounts():
+    check("조·억", ts.eok("1,604조 8,035억"), 16048035.0)
+    check("억", ts.eok("456억"), 456.0)
+    check("조만", ts.eok("3조"), 30000.0)
+    check("없음", ts.eok("-"), None)
+
+
 def test_numbers_come_out_of_naver_strings():
     """네이버는 숫자를 '15,130' 같은 문자열로 준다."""
     check("쉼표", ts.num("15,130"), 15130.0)
