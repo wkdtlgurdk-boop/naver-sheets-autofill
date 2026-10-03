@@ -66,6 +66,7 @@ concurrency:
 permissions:
   contents: write
   actions: read      # scan_run 으로 지난 실행의 스캔 파일을 받을 때
+  issues: write      # 시트 점검이 사람 손이 필요한 것을 찾으면 이슈로 알린다
 
 jobs:
   # 대상일을 정하고, 그 날 일이 이미 끝났으면 여기서 멈춘다.
@@ -189,6 +190,7 @@ jobs:
           python test_theme_write.py
           python test_groups_from_sheet.py
           python test_feed_export.py
+          python test_sheet_check.py
 
       # Scan finance.naver.com's theme pages and merge overlapping themes.
       # The list is ordered by today's move, so only its first SCAN_PAGES pages
@@ -281,6 +283,27 @@ jobs:
           THEME_AS_OF: ${{ inputs.as_of }}
           THEME_CLEAR_FIRST: ${{ inputs.clear_first && '1' || '' }}
         run: python theme_write.py
+
+      # 시트가 다음 실행을 받을 준비가 됐는지 본다 — 템플릿 탭에 남은 날짜·종목,
+      # 11월부터는 내년 Monthly 연간 탭. 둘 다 사람이 고칠 일이라 로그에만 남기면
+      # 아무도 못 본다(2026-10-01 템플릿의 '2/11'). 같은 제목의 이슈가 열려
+      # 있으면 새로 열지 않는다. 실패해도 그날 실행은 그대로 간다.
+      - name: 시트 점검
+        if: ${{ !cancelled() && !inputs.as_of }}
+        continue-on-error: true
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if python sheet_check.py --out /tmp/sheet_check.md; then exit 0; fi
+          [ -s /tmp/sheet_check.md ] || exit 1
+          title="[시트 점검] 테마 분석 시트에 고칠 것이 있습니다"
+          open=$(gh issue list --state open --limit 100 --json title --jq "[.[] | select(.title == \"$title\")] | length")
+          if [ "${open:-0}" -gt 0 ]; then
+            echo "같은 이슈가 이미 열려 있습니다 — 새로 열지 않습니다."
+          else
+            gh issue create --title "$title" --body-file /tmp/sheet_check.md
+          fi
 
       # Cards for Threads. Rendered from final_groups.json, so they say the
       # same numbers as the sheet without reading it -- a card still goes out
