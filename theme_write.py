@@ -57,6 +57,22 @@ def daily_tab_title(now: datetime) -> str:
     return f"{now.year % 100}.{now.month}월"
 
 
+def same_month(text: str, now: datetime) -> bool:
+    """A열 날짜 글자가 이번 달인가. '10/1' 과 '2026-10-01' 두 표기를 읽는다.
+
+    날짜로 읽히지 않는 글자는 이번 달이 아닌 것으로 본다.
+    """
+    text = text.strip()
+    try:
+        if "-" in text:
+            return int(text.split("-")[1]) == now.month
+        if "/" in text:
+            return int(text.split("/")[0]) == now.month
+    except (ValueError, IndexError):
+        pass
+    return False
+
+
 def resolve_daily_gid(book: Spreadsheet, now: datetime) -> int:
     """이번 달 Daily 탭. 없으면 템플릿을 복사해 만든다.
 
@@ -130,16 +146,28 @@ def ensure_daily_date(book: Spreadsheet, gid: int, now: datetime) -> int:
     # 아직 날짜가 없다. 앞에서부터 채워진 구간을 지나 처음 만나는 빈 블록이
     # 오늘 자리다. 그 뒤에 엉뚱한 날짜가 박힌 블록이 있어도 여기서 멈추므로
     # 영향을 받지 않는다.
+    #
+    # '날짜가 적혀 있다'만으로 채워진 블록으로 치지 않는다. 템플릿 탭 A75 에
+    # 예전에 쓰던 '2/11' 이 남아 있어서, 10월 탭을 복사해 만든 첫날(2026-10-01)
+    # 앞 일곱 블록을 건너뛰고 A85 에 썼다. 이번 달 날짜이거나 대표행에 종목이
+    # 들어 있는 블록만 채워진 것으로 본다 — 9월 탭의 8/31 처럼 달력이 지난달
+    # 월요일부터 시작하는 블록은 종목이 있으므로 그대로 채워진 블록이다.
     target = None
     seen_dated = False
     for r in headers:
-        if cell(r):
+        if cell(r) and (same_month(cell(r), now) or cell(r + 1, 1)):
             seen_dated = True
             continue
+        if cell(r):
+            print(f"  Daily: A{r}='{cell(r)}' 은 이번 달 날짜가 아니고 블록이 "
+                  "비어 있어 빈 블록으로 봅니다 (템플릿에 남은 날짜)")
         if seen_dated:
             target = r
             break
-    if target is None and seen_dated:
+    if target is None and not seen_dated:
+        # 채워진 블록이 하나도 없다 — 새 달 첫 거래일. 첫 블록이 오늘 자리다.
+        target = headers[0]
+    elif target is None:
         # 앞 블록이 전부 날짜로 찼다. 템플릿 블록은 17개인데 한 달 영업일은
         # 22~23일이라, 달력이 1일이 아니라 그 주 월요일(9월은 8/31)부터 시작하면
         # 넷째 주 중간에 바닥난다 — 2026-09-23 이 그렇게 멈췄다. 사람이 블록을
