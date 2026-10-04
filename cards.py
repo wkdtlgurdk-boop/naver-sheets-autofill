@@ -125,7 +125,10 @@ class Card:
                     fill=DIM, anchor="lm")
 
     def title(self, text: str, sub: str):
-        self.d.text((M, 258), text, font=font("black", SZ["title"]), fill=INK, anchor="ls")
+        # 「반도체 밸류체인(HBM · 장비 · 시스템반도체)」 같은 긴 그룹 이름이 카드
+        # 오른쪽 끝을 넘어 잘린 날이 있었다(10/2). 들어갈 때까지 글자를 줄인다.
+        f, text = shrink(self.d, text, "black", SZ["title"], R - M, MIN_TITLE)
+        self.d.text((M, 258), text, font=f, fill=INK, anchor="ls")
         self.d.text((M, 329), sub, font=font("medium", SZ["sub"]), fill=MUTED, anchor="ls")
 
     def row_rule(self, y: int, thick: int = 1):
@@ -202,16 +205,38 @@ def summary_card(now: datetime, groups: list[dict], market: dict) -> Card:
     for i, g in enumerate(groups):
         c.d.text((M, y), str(i + 1), font=font("medium", SZ["m_rank"]),
                  fill=GOLD if i == 0 else MUTED, anchor="ls")
-        c.d.text((148, y), g["keyword"], font=font("bold", SZ["m_name"]),
-                 fill=GOLD if i == 0 else INK, anchor="ls")
-        c.d.text((814, y), f"{avg_rate(g['top5']):+.2f}%", font=font("black", SZ["m_rate"]),
-                 fill=RED, anchor="rs")
+        rate = f"{avg_rate(g['top5']):+.2f}%"
+        rate_f = font("black", SZ["m_rate"])
+        # 이름은 상승률 숫자 왼쪽까지만 쓴다. 10/2 요약 카드에서 긴 이름이
+        # 상승률 위에 겹쳐 찍혔다 — 넘치면 글자를 줄이고, 그래도 넘치면 자른다.
+        room = 814 - c.d.textlength(rate, font=rate_f) - NAME_GAP - 148
+        name_f, name = shrink(c.d, g["keyword"], "bold", SZ["m_name"], room, MIN_M_NAME)
+        c.d.text((148, y), name, font=name_f, fill=GOLD if i == 0 else INK, anchor="ls")
+        c.d.text((814, y), rate, font=rate_f, fill=RED, anchor="rs")
         c.d.text((1008, y), f"{sum(eok(s['amount']) for s in g['top5']):,}억",
                  font=font("medium", SZ["m_amt"]), fill=MUTED, anchor="rs")
         if i < len(groups) - 1:
             c.row_rule(y + 23)
         y += 72
     return c
+
+
+NAME_GAP = 28        # 요약 카드에서 테마 이름과 상승률 사이 최소 간격
+MIN_TITLE = 48       # 제목은 이 크기까지만 줄인다 (원래 73)
+MIN_M_NAME = 26      # 요약 카드 테마 이름 (원래 34)
+
+
+def shrink(draw, text: str, weight: str, size: int, width: float, min_size: int):
+    """width 안에 들어갈 때까지 글자 크기를 1씩 줄인다. min_size 에서도 넘치면 뒤를 자른다.
+
+    대부분의 날은 원래 크기 그대로 나온다 — 원본 카드 실측 좌표(test_cards)를 깨지 않는다.
+    """
+    for s in range(size, min_size - 1, -1):
+        f = font(weight, s)
+        if draw.textlength(text, font=f) <= width:
+            return f, text
+    f = font(weight, min_size)
+    return f, fit(draw, text, f, int(width))
 
 
 def fit(draw, text: str, f, width: int) -> str:

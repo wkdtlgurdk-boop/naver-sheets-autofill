@@ -60,6 +60,9 @@ test_theme_write.py 가짜 시트로 행/열 계산 검증 (인증 불필요)
 cards.py            final_groups.json -> 스레드용 카드 PNG (1080x1350)
 post_threads.py     카드를 스레드에 캐러셀로 게시
 test_cards.py       카드 레이아웃을 원본 카드 실측값에 대조
+shorts.py           카드 -> 유튜브 쇼츠 세로 영상 mp4 (테마당 3초)
+youtube_upload.py   쇼츠 영상을 유튜브에 업로드 (같은 날 두 번 안 올림)
+test_shorts.py      영상 길이·표지 행 등장·업로드 제목 검증
 feed_export.py      시트 내용을 아침 매수 후보 봇이 읽을 JSON 으로 내보낸다
 codes.json          종목명 -> 종목코드 누적 지도 (시트에는 코드가 없다)
 test_feed_export.py 내보내기 규칙 검증 (인증 불필요)
@@ -169,6 +172,57 @@ https://graph.threads.net/v1.0/me?fields=id&access_token=...` 로 확인한다.
 
 **토큰은 60일마다 만료된다.** 만료돼도 카드는 계속 리포에 쌓이고 게시만
 멈추며, 실행 로그에 `[threads] 게시 건너뜀` 이 남는다.
+
+## 유튜브 쇼츠 (`shorts.py` / `youtube_upload.py`)
+
+스레드에는 카드를 그대로 올리고, 같은 카드를 이어 붙인 세로 영상을 유튜브
+쇼츠로도 올린다. 스레드 게시 바로 다음 단계다.
+
+```
+cards/<날짜>/*.png
+  -> shorts.py          shorts/<날짜>.mp4 (1080x1920, H.264, 소리 없음)
+  -> youtube_upload.py  내 채널에 업로드
+```
+
+- **표지**: 요약 카드의 지수까지가 먼저 뜨고, 테마 순위가 1위부터 한 줄씩 들어온다.
+- **테마 카드**: 한 장에 3초. 길이는 고정이 아니다 — 8개면 약 28초, 4개면 약 16초.
+- 영상은 매 실행 아티팩트(`scan-<run id>`)에도 남는다. 수동 실행의 `skip_youtube`
+  를 켜면 영상만 만들고 올리지 않는다.
+- 같은 날 두 번 올리지 않는다. 제목이 `2026.10.02 오늘 뜬 테마…` 로 시작하므로
+  내 채널 최근 업로드에서 그 날짜를 찾는다(상태 파일 없음).
+
+### 필요한 시크릿 (없으면 업로드만 건너뛴다)
+
+| 시크릿 | 내용 |
+|---|---|
+| `YT_CLIENT_ID` | Google Cloud OAuth 클라이언트 ID |
+| `YT_CLIENT_SECRET` | 같은 클라이언트의 비밀번호 |
+| `YT_REFRESH_TOKEN` | 채널 주인이 한 번 허락해서 받은 리프레시 토큰 |
+
+받는 법 (PC 없이 브라우저만으로 된다):
+
+1. <https://console.cloud.google.com/> 에서 새 프로젝트 → **API 및 서비스 →
+   라이브러리**에서 **YouTube Data API v3** 사용 설정.
+2. **OAuth 동의 화면**: 외부(External), 앱 이름·이메일만 채운다. 그다음
+   **앱 게시(Publish app)** 를 눌러 '프로덕션'으로 바꾼다. **테스트 상태로 두면
+   리프레시 토큰이 7일 뒤 만료돼** 업로드가 조용히 멈춘다. 검증은 받지 않아도
+   된다(본인 계정만 쓰므로 '확인되지 않은 앱' 경고만 뜬다).
+3. **사용자 인증 정보 → OAuth 클라이언트 ID 만들기** → 유형 '웹 애플리케이션',
+   승인된 리디렉션 URI 에 `https://developers.google.com/oauthplayground` 추가.
+   나온 클라이언트 ID·보안 비밀이 위 두 시크릿이다.
+4. <https://developers.google.com/oauthplayground> → 오른쪽 위 톱니바퀴 →
+   **Use your own OAuth credentials** 체크 → 3번 값 입력.
+5. 왼쪽 입력칸에 범위 두 개를 넣고 Authorize:
+   `https://www.googleapis.com/auth/youtube.upload`
+   `https://www.googleapis.com/auth/youtube.readonly` (중복 확인용 — 내 업로드 목록 읽기)
+   쇼츠를 올릴 **채널의 구글 계정**으로 로그인한다. '확인되지 않은 앱' → 고급 → 이동.
+6. **Exchange authorization code for tokens** → 나온 **Refresh token** 이 세 번째 시크릿.
+
+**공개 범위 주의.** Google 이 감사(audit)하지 않은 API 프로젝트로 올린 영상은
+공개로 요청해도 **비공개로 잠긴다**. 로그에 `공개로 요청했지만 'private' 로 올라갔습니다`
+가 찍히면 그 상태다. 유튜브 스튜디오 앱에서 공개로 바꾸면 되고, 매번 손대기
+싫으면 Google 의 *YouTube API Services 감사·할당량 확장 신청*을 한 번 넣는다.
+기본 할당량(하루 10,000)으로 하루 한 편(1,600)은 충분하다.
 
 ## 낡은 테마와 안 맞는 종목 (`exclusions.json`)
 

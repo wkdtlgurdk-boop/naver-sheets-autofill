@@ -56,6 +56,10 @@ on:
         description: "그 날 실행(run id)의 스캔 파일로 다시 묶는다 — 장중에 지난 날짜를 고칠 때 (as_of 와 함께)"
         type: string
         default: ""
+      skip_youtube:
+        description: "쇼츠 영상은 만들되 유튜브에는 올리지 않음 (영상은 아티팩트에 남음)"
+        type: boolean
+        default: false
 
 concurrency:
   group: theme-calendar
@@ -341,9 +345,10 @@ jobs:
             python groups_from_sheet.py
           fi
 
+      # ffmpeg 는 유튜브 쇼츠 영상(shorts.py)을 mp4 로 굽는 데 쓴다.
       - name: Install Korean fonts
         if: ${{ !cancelled() }}
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-cjk-extra
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-cjk-extra ffmpeg
 
       - name: Check card layout
         if: ${{ !cancelled() }}
@@ -418,6 +423,29 @@ jobs:
           THREADS_ALLOW_BACKFILL: ${{ inputs.repost && '1' || '' }}
         run: python post_threads.py
 
+      # 스레드에 올린 카드를 이어 붙여 유튜브 쇼츠로도 올린다. 테마 카드 한 장에
+      # 3초라 길이는 테마 수를 따른다(8개 ≈ 28초). 영상은 카드에서 바로 만들므로
+      # 카드가 나온 날이면 늘 나오고, 업로드만 시크릿·중복 여부에 따라 건너뛴다.
+      - name: Make YouTube Shorts video
+        if: ${{ !cancelled() }}
+        env:
+          THEME_AS_OF: ${{ inputs.as_of }}
+        run: |
+          python test_shorts.py
+          python shorts.py
+
+      # 시크릿(YT_CLIENT_ID·YT_CLIENT_SECRET·YT_REFRESH_TOKEN)이 없거나 그날 영상이
+      # 이미 있으면 0 으로 끝난다 — 스레드 게시와 같은 원칙. 받는 법은 README.
+      - name: Upload to YouTube Shorts
+        if: ${{ !cancelled() && inputs.skip_youtube != true }}
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          THEME_AS_OF: ${{ inputs.as_of }}
+          YT_ALLOW_BACKFILL: ${{ inputs.repost && '1' || '' }}
+        run: python youtube_upload.py
+
       # Keep the day's grouping and exclusions in the repo so they can be read
       # and corrected. An edit steers the next run: theme_scan reads both files
       # on every pass, llm_group only rewrites keywords.json when its own answer
@@ -448,5 +476,6 @@ jobs:
             final_groups.txt
             market_summary.json
             cards/**
+            shorts/**
           if-no-files-found: warn
           retention-days: 14
