@@ -71,8 +71,8 @@ def date_mark(now: datetime) -> str:
 
 def title(groups: list[dict], now: datetime) -> str:
     top = cards.ranked(groups)[0]["keyword"] if groups else ""
-    t = f"{date_mark(now)} 오늘 뜬 테마 TOP {len(groups)} | 1위 {top} #shorts"
-    return t if len(t) <= TITLE_LIMIT else f"{date_mark(now)} 오늘 뜬 테마 TOP {len(groups)} #shorts"
+    t = f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} | 1위 {top} #shorts"
+    return t if len(t) <= TITLE_LIMIT else f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} #shorts"
 
 
 def description(groups: list[dict], now: datetime) -> str:
