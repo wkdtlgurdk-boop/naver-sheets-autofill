@@ -134,7 +134,7 @@ class Shorts:
                 d.rounded_rectangle([a, y, a + max(seg * frac, 8), y + 8], radius=4, fill=GOLD)
         f = cards.font("medium", 34)
         d.text((x0, 1770), "거래대금 순 · 평균상승률", font=f, fill=MUTED, anchor="lm")
-        d.text((x1, 1770), "오늘의 테마" if k == 0 else f"{k} / {n}",
+        d.text((x1, 1770), "전체 순위" if k == 0 else f"{k} / {n}",
                font=cards.font("bold", 34), fill=INK, anchor="rm")
 
     def frame(self, t: float) -> Image.Image:
