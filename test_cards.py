@@ -174,6 +174,42 @@ def test_long_theme_list_is_truncated_not_overflowed():
     check("짧으면 그대로", cards.fit(d, "짧다", f, 800), "짧다")
 
 
+def test_long_group_name_stays_inside_the_card():
+    """10/2 에 「반도체 밸류체인(HBM·장비·시스템반도체)」가 요약 카드에서 상승률과
+    겹쳐 찍히고, 테마 카드 제목은 오른쪽 끝에서 잘렸다. 둘 다 칸 안에 들어와야 한다."""
+    from PIL import Image, ImageDraw
+    d = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    long = "반도체 밸류체인(HBM·장비·시스템반도체)"
+    rate_f = cards.font("black", cards.SZ["m_rate"])
+    room = 814 - d.textlength("+6.03%", font=rate_f) - cards.NAME_GAP - 148
+    f, out = cards.shrink(d, long, "bold", cards.SZ["m_name"], room, cards.MIN_M_NAME)
+    check("요약 이름이 상승률 앞에서 끝남", d.textlength(out, font=f) <= room, True)
+    f, out = cards.shrink(d, cards.spaced(long), "black", cards.SZ["title"],
+                          cards.R - cards.M, cards.MIN_TITLE)
+    check("제목이 카드 안에 들어감", d.textlength(out, font=f) <= cards.R - cards.M, True)
+    # 짧은 이름은 원래 크기 그대로 — 원본 실측 좌표가 유지돼야 한다
+    f, out = cards.shrink(d, "바이오", "bold", cards.SZ["m_name"], room, cards.MIN_M_NAME)
+    check("짧으면 원래 크기", (f.size, out), (cards.SZ["m_name"], "바이오"))
+
+    # 실제 카드로 그려서 이름 칸과 상승률 칸 사이에 빈 세로줄이 남는지 본다
+    groups = [dict(FIXTURE[0], keyword=long)] + FIXTURE[1:]
+    with tempfile.TemporaryDirectory() as tmp:
+        made = cards.build(Path(tmp), groups, MARKET, datetime(2026, 10, 2, 17, 0))
+        im = Image.open(made[0]).convert("RGB")
+        px = im.load()
+        ink = [any(sum(px[x, y]) > 200 for y in range(583, 616)) for x in range(148, 815)]
+        # 이름 끝과 상승률 시작 사이에 글자 없는 세로줄이 NAME_GAP 의 절반 이상 이어져야 한다
+        run = best = 0
+        for on in ink[ink.index(True):]:
+            run = 0 if on else run + 1
+            best = max(best, run)
+        check("1행 이름과 상승률 사이에 빈 칸", best >= cards.NAME_GAP // 2, True)
+        title_im = Image.open(next(p for p in made if p.name != "01_monthly.png")).convert("RGB")
+        tp = title_im.load()
+        check("제목이 오른쪽 여백을 침범하지 않음",
+              all(sum(tp[x, y]) < 200 for x in range(cards.R + 2, cards.W) for y in range(190, 270)), True)
+
+
 def _as_of(value):
     """THEME_AS_OF 를 넣고 as_of 모듈을 다시 읽는다."""
     import importlib
