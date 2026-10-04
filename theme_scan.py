@@ -42,6 +42,16 @@ MIN_COUNT = 3          # qualifying stocks needed for a theme to count
 MERGE_THRESHOLD = 0.6  # overlap coefficient for auto-merge
 SCAN_PAGES = 3         # 목록 전체를 읽는다 (2026-09-11 실측 266개 = 3페이지)
 PAGE_SIZE = 100        # 한 페이지에 받는 테마 수 (등락률 내림차순 상위)
+# 신규상장주는 어느 테마에서도 빼기 (2026-10-01 사용자 지정). 브릴스(+59%)가
+# 상장 직후 수급으로 오른 것을 로봇 테마 1위로 올렸다. 상장 시기를 따로 받는
+# 대신 네이버가 이미 만들어 두는 '2026 하반기 신규상장' 같은 테마 명단을 쓴다
+# — 스캔이 어차피 전 테마를 읽으므로 호출이 늘지 않는다. 올해와 작년 것만.
+# 하루 30% 넘게 오른 종목은 받지 않는다 (2026-10-01 사용자 지정). 가격제한폭이
+# ±30% 라 상한가는 +30.00% 까지다 — 그보다 더 오른 것은 상장 첫날·거래 재개
+# 처럼 제한폭이 없는 날이고, 테마가 움직인 것이 아니다 (브릴스 +59.49%).
+MAX_RATE = 30.0
+NEW_LISTING_TAG = "신규상장"
+NEW_LISTING_YEARS = 2
 PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
 MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 
@@ -262,6 +272,9 @@ def filter_themes(raw, exclusions=None, patterns=None):
 
         qualifying = []
         for s in t["qualifying"]:
+            if s.get("new_listing"):
+                print(f"[제외] {s['name']} @ '{name}' — 신규상장주", file=sys.stderr)
+                continue
             srule = stock_exclusion(s, name, keyword, stock_rules)
             if srule:
                 used.add(id(srule))
@@ -337,6 +350,8 @@ def qualifies(rate, cap, amount=None):
     반응한 곳이므로, 그 구간에서만 시총을 낮춰 센다.
     """
     if amount is not None and amount < MIN_AMOUNT:
+        return False
+    if rate > MAX_RATE:
         return False
     if rate >= SURGE_RATE and cap >= SURGE_CAP:
         return True
@@ -489,6 +504,24 @@ def custom_theme_entries(custom, seen, fetch=None):
     return out
 
 
+def is_recent_listing_theme(name, year):
+    """'2026 하반기 신규상장' 처럼 올해·작년의 신규상장 묶음인가. 연도가 없으면 그렇다고 본다."""
+    if NEW_LISTING_TAG not in (name or ""):
+        return False
+    m = re.search(r"(20\d\d)", name)
+    return not m or int(m.group(1)) > year - NEW_LISTING_YEARS
+
+
+def mark_new_listings(results, codes):
+    """신규상장 명단에 든 종목에 new_listing 표시를 단다. raw_scan.json 에 남아
+    --regroup 때도 같은 판단이 나온다."""
+    for t in results:
+        for key in ("members", "qualifying"):
+            for s in t.get(key) or []:
+                if s.get("code") in codes:
+                    s["new_listing"] = True
+
+
 def scan_themes():
     themes = fetch_theme_list()
     print(f"themes listed: {len(themes)}", file=sys.stderr)
@@ -507,11 +540,15 @@ def scan_themes():
     replace_parts = [p for t in custom for p in (t.get("replaces") or []) if p]
     seen = {}
     results = []
+    new_codes = set()
+    year = time.localtime().tm_year
     for t in themes:
         name = t.get("name") or str(t.get("no"))
         stocks = fetch_theme_stocks(t["no"])
         for s in stocks:
             seen.setdefault(s["name"], s)
+        if is_recent_listing_theme(name, year):
+            new_codes.update(s["code"] for s in stocks)
         if _base(name) in replaced or any(p in name for p in replace_parts):
             print(f"[직접테마] 네이버 '{name}' 는 직접 만든 테마로 대신합니다", file=sys.stderr)
             continue
@@ -537,6 +574,8 @@ def scan_themes():
             })
         time.sleep(0.12)
     results += custom_theme_entries(custom, seen)
+    mark_new_listings(results, new_codes)
+    print(f"[신규상장] 명단 {len(new_codes)}종목은 테마 종목에서 뺍니다", file=sys.stderr)
     return results
 
 

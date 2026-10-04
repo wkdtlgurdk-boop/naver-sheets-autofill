@@ -331,6 +331,42 @@ def test_daily_extends_when_blocks_run_out():
     check("앞 블록은 그대로", book.values.get((1, 168)), None)
 
 
+def test_daily_new_month_starts_at_first_block_despite_stale_template_date():
+    # 2026-10-01: 템플릿을 복사한 10월 탭의 A75 에 예전 날짜 '2/11' 이 남아
+    # 있어 앞 블록들을 건너뛰고 A85 에 썼다. 첫 블록에 써야 한다.
+    book = FakeBook()
+    for r in range(4, 95, 10):
+        add_block(book, r, day="2/11" if r == 74 else "")
+    oct1 = datetime(2026, 10, 1, 20, 20, tzinfo=KST)
+    tw.write_daily(book, FAKE_GID, GROUPS, oct1)
+    check("첫 블록에 날짜", book.values.get((0, 4)), "2026-10-01")
+    check("첫 블록 대표행 키워드", book.values.get((1, 5)), "2차전지")
+    check("2/11 다음 블록은 그대로", book.values.get((0, 84)), None)
+
+
+def test_daily_next_day_after_stale_template_date():
+    # 10/1 이 첫 블록에 들어간 뒤 10/2 는 둘째 블록. 2/11 은 계속 무시한다.
+    book = FakeBook()
+    for r in range(4, 95, 10):
+        add_block(book, r, day={4: "10/1", 74: "2/11"}.get(r, ""))
+    book.put("B5", "바이오")
+    oct2 = datetime(2026, 10, 2, 20, 20, tzinfo=KST)
+    tw.write_daily(book, FAKE_GID, GROUPS, oct2)
+    check("둘째 블록에 날짜", book.values.get((0, 14)), "2026-10-02")
+
+
+def test_daily_last_month_monday_with_data_counts_as_filled():
+    # 9월 탭은 8/31(월)부터 시작했다. 지난달 날짜라도 종목이 있으면 채워진 블록.
+    book = FakeBook()
+    add_block(book, 4, day="8/31")
+    book.put("B5", "바이오")
+    add_block(book, 14)
+    sep1 = datetime(2026, 9, 1, 20, 20, tzinfo=KST)
+    tw.write_daily(book, FAKE_GID, GROUPS, sep1)
+    check("8/31 다음 블록에 9/1", book.values.get((0, 14)), "2026-09-01")
+    check("8/31 블록은 그대로", book.values.get((0, 4)), "8/31")
+
+
 def test_daily_does_not_extend_over_notes():
     book = FakeBook()
     add_block(book, 157, day="8/27")
