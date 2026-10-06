@@ -41,6 +41,10 @@ from pathlib import Path
 AFFINITY_FILE = Path(__file__).parent / "affinity.json"
 
 MIN_HISTORY = 6     # 이만큼은 시트에 올랐어야 판단한다
+# 기록이 이보다 적어도, 그동안 한 번도 이 계열 칸에 오른 적이 없으면 오배정이다.
+# 2026-10-06 나노신소재(2차전지 3번)·레이크머티리얼즈(이차전지·반도체 4번)가
+# '태양광에너지' 칸에 앉았다 — 기록이 6번에 못 미쳐 판단을 건너뛰었다.
+MIN_HISTORY_NEVER = 3
 MAX_SHARE = 0.15    # 같은 계열로 오른 비율이 이보다 낮으면 오배정
 
 # 계열을 가르지 못하는 낱말. '반도체 소재'와 '2차전지 소재'를 '소재'로 잇지 않는다.
@@ -114,7 +118,9 @@ def misfit(name: str, names: list[str], affinity: dict[str, dict[str, int]]) -> 
     """오배정이면 사유 한 줄, 아니면 None."""
     history = affinity.get(name) or {}
     total, same = fit_share(history, names)
-    if total < MIN_HISTORY or same / total >= MAX_SHARE:
+    if total < MIN_HISTORY_NEVER or same / total >= MAX_SHARE:
+        return None
+    if total < MIN_HISTORY and same > 0:
         return None
     home = ", ".join(f"{k} {v}번" for k, v in Counter(history).most_common(2))
     return f"과거 {total}번 중 이 계열 {same}번 (주로 {home})"

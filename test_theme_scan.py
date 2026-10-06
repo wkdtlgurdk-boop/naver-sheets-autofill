@@ -342,6 +342,45 @@ def test_recent_listing_theme_window():
     check("다른 테마", ts.is_recent_listing_theme("로봇", 2026), False)
 
 
+def test_custom_theme_is_never_merged_or_folded():
+    """직접 테마는 겹쳐도 합치지 않고 '2차전지' 같은 키워드로 접지 않는다 (10/6)."""
+    custom = theme("2차전지 소재", [("에코프로비엠", 12.9), ("포스코퓨처엠", 11.8), ("엘앤에프", 9.0)])
+    custom["theme_id"] = "custom:2차전지 소재"
+    lithium = theme("리튬", [("에코프로비엠", 12.9), ("포스코퓨처엠", 11.8), ("TCC스틸", 12.2)])
+    out = ts.group_themes([lithium, custom])
+    names = {g["keyword"]: [t["theme_name"] for t in g["themes"]] for g in out}
+    check("직접 테마는 제 이름 그대로", names.get("2차전지 소재"), ["2차전지 소재"])
+    check("리튬은 따로", "2차전지 소재" in sum(names.values(), []) and len(out), 2)
+
+
+def test_custom_member_goes_only_to_its_own_theme():
+    """직접 테마가 오늘 떴으면 그 종목은 다른 칸에 앉지 않는다 (10/6 나노신소재 → 태양광)."""
+    real = ts.custom_homes
+    ts.custom_homes = lambda custom=None: {"나노신소재": {"2차전지 소재"}}
+    try:
+        out = ts.build_output([
+            group("태양광에너지", [theme("태양광에너지", [("나노신소재", 7.9)] + filler("s", 3))]),
+            group("2차전지 소재", [theme("2차전지 소재", [("나노신소재", 7.9)] + filler("b", 3))]),
+        ], affinity={})
+    finally:
+        ts.custom_homes = real
+    top = {g["keyword"]: [s["name"] for s in g["top5"]] for g in out}
+    check("태양광에서 빠짐", "나노신소재" in top["태양광에너지"], False)
+    check("제 칸으로 감", "나노신소재" in top["2차전지 소재"], True)
+
+
+def test_custom_member_is_free_when_its_theme_is_absent():
+    real = ts.custom_homes
+    ts.custom_homes = lambda custom=None: {"나노신소재": {"2차전지 소재"}}
+    try:
+        out = ts.build_output([
+            group("태양광에너지", [theme("태양광에너지", [("나노신소재", 7.9)] + filler("s", 3))]),
+        ], affinity={})
+    finally:
+        ts.custom_homes = real
+    check("직접 테마가 없으면 그대로", out[0]["top5"][0]["name"], "나노신소재")
+
+
 def test_custom_theme_replaces_naver_theme():
     """직접 만든 'OLED' 가 네이버 'OLED(유기 발광 다이오드)' 를 대신한다.
 

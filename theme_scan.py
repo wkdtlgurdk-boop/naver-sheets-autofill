@@ -64,9 +64,10 @@ KEYWORD_PATTERNS = {
         "코로나19", "백신", "진단시약", "방역", "바이오시밀러", "제약업체",
         "비만치료제", "mRNA", "치매", "면역항암제",
     ],
-    "2차전지": [
-        "2차전지", "리튬", "폐배터리", "전력저장장치", "리비안",
-    ],
+    # '2차전지' 는 custom_themes.json 의 셀·소재·장비가 맡는다. 예전에는 여기서
+    # '2차전지' 글자가 든 테마를 모두 한 키워드로 접어서, 직접 고른 '2차전지 소재'
+    # 까지 리튬·전기차·ESS 와 한 칸으로 합쳐졌다(2026-10-06 TCC스틸·알멕).
+    "리튬·폐배터리": ["리튬", "폐배터리"],
     "비철금속": ["귀금속", "비철금속"],
 }
 
@@ -696,6 +697,28 @@ def core_codes(themes):
     return {s["code"] for t in narrow for s in t["qualifying"]}
 
 
+def custom_homes(custom=None):
+    """{종목명: {직접테마 이름...}}. 한 종목이 둘 이상의 직접테마에 들 수 있다."""
+    homes = {}
+    for t in (load_custom_themes() if custom is None else custom):
+        for n in t["stocks"]:
+            homes.setdefault(n, set()).add(t["name"])
+    return homes
+
+
+def group_themes(raw):
+    """겹침 병합과 키워드 접기. 직접 만든 테마는 둘 다 거치지 않고 제 이름으로 남는다.
+
+    직접 테마는 사용자가 나눈 칸이다. 리튬·전기차와 종목이 겹친다고 합치거나
+    '2차전지' 같은 키워드로 접으면 나눈 의미가 사라진다 — 2026-10-06 묶기(LLM)가
+    인증 실패로 건너뛰어지자 '2차전지 소재'가 리튬·전기차·ESS 와 한 칸이 됐다.
+    """
+    custom = [t for t in raw if str(t.get("theme_id", "")).startswith("custom:")]
+    naver = [t for t in raw if not str(t.get("theme_id", "")).startswith("custom:")]
+    groups = apply_keyword_overrides(merge_by_overlap(naver)) if naver else []
+    return groups + [{"keyword": t["theme_name"], "themes": [t]} for t in custom]
+
+
 def build_output(final_groups, affinity=None):
     """Pick each group's five stocks, giving no stock to two groups.
 
@@ -746,11 +769,22 @@ def build_output(final_groups, affinity=None):
     # 그룹이 뒤에서 가져갈 수 있다.
     affinity = load_affinity() if affinity is None else affinity
 
+    # 직접 고른 테마(custom_themes.json)의 종목은 그 테마가 오늘 떴으면 그 칸으로만
+    # 간다. 사용자가 시트 기록으로 나눠 둔 자리이므로, 네이버 테마가 같은 종목을
+    # 다른 칸으로 끌고 가지 못하게 한다(10/6 나노신소재가 '태양광에너지' 칸에).
+    home = custom_homes()
+    present = {p["keyword"] for p in pools}
+
     taken, out = set(), []
     for p in pools:
         top5 = []
         for s in p["ranked"]:
             if s["code"] in taken:
+                continue
+            mine = home.get(s["name"], set())
+            if mine and p["keyword"] not in mine and mine & present:
+                print(f"[직접테마 소속] {p['keyword']} — {s['name']} {s['rate']:+.2f}% 뺌: "
+                      f"{', '.join(sorted(mine & present))} 칸 종목", file=sys.stderr)
                 continue
             why = misfit(s["name"], [p["keyword"]] + p["source_themes"], affinity)
             if why:
@@ -813,8 +847,7 @@ def main():
     print(f"[filter] {scanned}개 중 {len(raw)}개 통과 "
           f"({scanned - len(raw)}개 제외)", file=sys.stderr)
 
-    auto_groups = merge_by_overlap(raw)
-    final_groups = apply_keyword_overrides(auto_groups)
+    final_groups = group_themes(raw)
     final = build_output(final_groups)
 
     with open(out_dir / "final_groups.json", "w", encoding="utf-8") as f:
