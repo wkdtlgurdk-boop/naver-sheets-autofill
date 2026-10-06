@@ -74,6 +74,21 @@ def test_youtube_title_and_duplicate_mark():
     check("설명에 고지", "투자 권유가 아닌" in d, True)
 
 
+def test_youtube_tags_carry_the_day_and_stay_under_the_limit():
+    groups = [{"keyword": "반도체 밸류체인(HBM·장비·시스템반도체)",
+               "top5": [{"name": "케이씨텍", "rate": 15.5, "amount": 100000},
+                        {"name": "와이씨", "rate": 7.3, "amount": 90000}]},
+              {"keyword": "로봇", "top5": [{"name": "하이젠알앤엠", "rate": 18.3, "amount": 50000}]}]
+    t = yt.tags(groups)
+    for want in ("주식", "오늘의테마", "반도체 밸류체인", "HBM", "시스템반도체", "로봇", "로봇테마주",
+                 "케이씨텍", "하이젠알앤엠"):
+        check(f"태그에 {want}", want in t, True)
+    check("중복 없음", len(t), len(set(t)))
+    big = [{"keyword": f"테마{i}이름이꽤긴편", "top5": [{"name": f"종목{i}{j}", "rate": 5, "amount": 1}
+                                                    for j in range(5)]} for i in range(40)]
+    check("500자 안", yt._tags_len(yt.tags(big)) <= 500, True)
+
+
 def test_missing_secrets_skip_without_failing():
     import os
     old = {k: os.environ.pop(k, None) for k in ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN")}

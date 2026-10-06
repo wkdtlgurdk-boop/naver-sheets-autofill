@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -38,6 +39,13 @@ API = "https://www.googleapis.com/youtube/v3"
 UPLOAD = "https://www.googleapis.com/upload/youtube/v3/videos"
 TITLE_LIMIT = 100
 DESC_LIMIT = 5000
+# 유튜브 태그는 합쳐서 500자까지다(쉼표 포함, 띄어쓰기가 든 태그는 따옴표 두 자가
+# 더 붙는다). 넘치면 업로드가 400 으로 거부되므로 넉넉히 끊는다.
+TAGS_LIMIT = 450
+# 매일 붙는 태그. 그날 테마·대장주 태그는 tags() 가 그 뒤에 덧붙인다.
+BASE_TAGS = ["주식", "테마주", "오늘의테마", "shorts", "쇼츠", "주식쇼츠", "국내주식",
+             "코스피", "코스닥", "주식시장", "장마감", "시황", "증시", "급등주", "특징주",
+             "주도주", "주식테마", "테마분석", "주식공부", "주식투자"]
 CATEGORY = "22"            # People & Blogs. 금융 전용 분류는 없다.
 
 
@@ -75,12 +83,50 @@ def title(groups: list[dict], now: datetime) -> str:
     return t if len(t) <= TITLE_LIMIT else f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} #shorts"
 
 
+def _tag_words(keyword: str) -> list[str]:
+    """'반도체 밸류체인(HBM·장비·시스템반도체)' -> 그 이름과 괄호 안·가운뎃점으로 나뉜 낱말들."""
+    base = keyword.split("(")[0].strip()
+    parts = [base] + [p.strip() for p in re.split(r"[()·/,]", keyword) if p.strip()]
+    out = []
+    for p in parts:
+        for t in (p, p.replace(" ", "")):
+            if t and t not in out:
+                out.append(t)
+    return out
+
+
+def _tags_len(tags: list[str]) -> int:
+    return sum(len(t) + (2 if " " in t else 0) for t in tags) + max(len(tags) - 1, 0)
+
+
+def tags(groups: list[dict]) -> list[str]:
+    """기본 태그 + 그날 테마 이름 (+ '테마주' 붙인 꼴) + 테마별 대장주. 500자 안으로."""
+    want = list(BASE_TAGS)
+    ranked = cards.ranked(groups)
+    for g in ranked:
+        for w in _tag_words(g["keyword"]):
+            want += [w, f"{w.replace(' ', '')}테마주"] if w == g["keyword"].split("(")[0].strip() else [w]
+    for g in ranked:
+        want += [s["name"] for s in g["top5"][:2]]
+    out = []
+    for t in want:
+        t = t.replace("<", "").replace(">", "").strip()
+        if not t or t in out or len(t) > 30:
+            continue
+        if _tags_len(out + [t]) > TAGS_LIMIT:
+            break
+        out.append(t)
+    return out
+
+
 def description(groups: list[dict], now: datetime) -> str:
     lines = [f"{now.year}년 {now.month}월 {now.day}일 장 마감 테마 정리 (거래대금 순 · 평균상승률)", ""]
     for i, g in enumerate(cards.ranked(groups), 1):
         lines.append(f"{i}. {g['keyword']} {cards.avg_rate(g['top5']):+.2f}%")
     lines += ["", cards.footer_text(), "투자 권유가 아닌 시세 정리입니다.", "",
-              "#shorts #주식 #테마주 #오늘의테마"]
+              " ".join(["#shorts #주식 #테마주 #오늘의테마"]
+                       + [f"#{g['keyword'].split('(')[0].replace(' ', '').replace('·', '')}"
+                          for g in cards.ranked(groups)[:5]])]
     return "\n".join(lines)[:DESC_LIMIT]
 
 
@@ -145,7 +191,7 @@ def main() -> int:
         if done and not backfill_ok:
             return give_up(f"{date_mark(now)} 영상이 이미 올라가 있습니다 (https://youtu.be/{done})")
         meta = {"snippet": {"title": title(groups, now), "description": description(groups, now),
-                            "tags": ["주식", "테마주", "오늘의테마", "shorts"],
+                            "tags": tags(groups),
                             "categoryId": CATEGORY, "defaultLanguage": "ko"},
                 "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
         got = upload(token, video, meta)
