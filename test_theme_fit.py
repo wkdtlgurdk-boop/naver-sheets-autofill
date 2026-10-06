@@ -35,6 +35,14 @@ class Misfit(unittest.TestCase):
         self.assertIsNone(tf.misfit("신규주", ["반도체"], AFF))
         self.assertIsNone(tf.misfit("처음보는주", ["반도체"], AFF))
 
+    def test_기록이_적어도_한번도_이_계열이_아니면_오배정(self):
+        # 10/6 나노신소재(2차전지 3번)가 '태양광에너지' 칸에 앉았다.
+        aff = {"나노신소재": {"2차전지": 3}, "파미셀": {"바이오": 2, "화장품": 1, "반도체 장비·소재": 1}}
+        self.assertIsNotNone(tf.misfit("나노신소재", ["태양광에너지"], aff))
+        self.assertIsNone(tf.misfit("나노신소재", ["2차전지 소재"], aff))
+        # 적은 기록 중 한 번이라도 같은 계열이면 판단하지 않는다.
+        self.assertIsNone(tf.misfit("파미셀", ["반도체 재료/부품"], aff))
+
     def test_기록을_만든다(self):
         days = {"d1": [{"keyword": "반도체", "stocks": [{"name": "A", "rate": 5}]}],
                 "d2": [{"keyword": "반도체", "stocks": [{"name": "A", "rate": 5}]},
