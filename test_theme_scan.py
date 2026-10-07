@@ -251,16 +251,18 @@ def test_scan_counts_participation_from_the_stocks_themselves():
         return [{"name": f"종목{i}", "code": f"{i:06d}", "rate": r,
                  "cap": 5000, "amount": 50_000} for i, r in enumerate(rates)]
 
-    real_list, real_stocks, real_sleep = (
-        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep)
+    real_list, real_stocks, real_sleep, real_custom = (
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes)
     ts.fetch_theme_list = lambda: rows
     ts.fetch_theme_stocks = fake_stocks
     ts.time.sleep = lambda _s: None
+    # 실제 custom_themes.json 을 읽으면 codes 의 종목을 네트워크로 받으러 간다.
+    ts.load_custom_themes = lambda: []
     try:
         out = ts.scan_themes()
     finally:
-        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep = (
-            real_list, real_stocks, real_sleep)
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes = (
+            real_list, real_stocks, real_sleep, real_custom)
     check("목록의 99/99 를 믿지 않음",
           (out[0]["member_count"], out[0]["up_count"]), (5, 3))
     check("참여율 60%", ts.participation(out[0]), 0.6)
@@ -276,16 +278,18 @@ def test_scan_fetches_every_theme_it_listed():
         return [{"name": f"종목{i}", "code": f"{i:06d}", "rate": 9.0,
                  "cap": 5000, "amount": 50_000} for i in range(3)]
 
-    real_list, real_stocks, real_sleep = (
-        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep)
+    real_list, real_stocks, real_sleep, real_custom = (
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes)
     ts.fetch_theme_list = lambda: rows
     ts.fetch_theme_stocks = fake_stocks
     ts.time.sleep = lambda _s: None
+    # 실제 custom_themes.json 을 읽으면 codes 의 종목을 네트워크로 받으러 간다.
+    ts.load_custom_themes = lambda: []
     try:
         out = ts.scan_themes()
     finally:
-        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep = (
-            real_list, real_stocks, real_sleep)
+        ts.fetch_theme_list, ts.fetch_theme_stocks, ts.time.sleep, ts.load_custom_themes = (
+            real_list, real_stocks, real_sleep, real_custom)
     check("둘 다 상세 조회", asked, [1, 2])
     check("둘 다 결과에", [t["theme_name"] for t in out], ["평균낮음", "평균높음"])
 
