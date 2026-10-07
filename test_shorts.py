@@ -84,6 +84,11 @@ def test_youtube_tags_are_few():
     check("괄호 앞 이름", t[5], "테마0")
 
 
+def test_upload_constants_exist():
+    """10/7 CATEGORY 를 지워 업로드가 NameError 로 건너뛰어졌다. 상수가 다 있는지 본다."""
+    for name in ("CATEGORY", "TOKEN_URL", "API", "UPLOAD", "TITLE_LIMIT", "DESC_LIMIT"):
+        check(f"{name} 있음", hasattr(yt, name), True)
+
 def test_missing_secrets_skip_without_failing():
     import os
     old = {k: os.environ.pop(k, None) for k in ("YT_CLIENT_ID", "YT_CLIENT_SECRET", "YT_REFRESH_TOKEN")}
