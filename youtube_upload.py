@@ -42,6 +42,7 @@ DESC_LIMIT = 5000
 # 있다(2026-10-06 사용자 결정: 고정 5개 + 그날 상위 테마 4개).
 BASE_TAGS = ["주식", "테마주", "오늘의테마", "장마감", "특징주"]
 TOP_THEMES = 4
+CATEGORY = "22"            # People & Blogs. 금융 전용 분류는 없다.
 
 
 def give_up(why: str) -> int:
