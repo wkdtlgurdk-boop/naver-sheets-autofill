@@ -6,3 +6,4 @@ __pycache__/
 *.pyc
 service-account*.json
 cards/
+scan_mode.json

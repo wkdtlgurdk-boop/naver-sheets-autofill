@@ -55,6 +55,18 @@ NEW_LISTING_YEARS = 2
 PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
 MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 
+# 급락일 완화 (2026-10-13 사용자 지정). 10/12 코스피 -3.65%·코스닥 -4.83% 날
+# 264개 테마 중 하나도 문턱을 넘지 못해 시트·카드·스레드·쇼츠가 통째로 빠졌다.
+# 지수가 크게 빠진 날에는 "오른 테마"가 아니라 "버틴 테마"가 그날의 주도주라서,
+# 코스피·코스닥 중 하나라도 CRASH_INDEX_RATE 이하이면 아래 값으로 문턱을 낮춘다.
+# 그날 시세로 재 보니 +3%/+8%·2종목·참여 1% 에서 해운·시멘트 등이 잡혔다.
+# 정한 값은 MODE_FILE 에 남겨 --regroup 과 cards.py 가 같은 기준을 쓴다.
+CRASH_INDEX_RATE = -2.0
+CRASH_RULES = {"MIN_RATE": 3.0, "MID_RATE": 8.0, "MIN_COUNT": 2,
+               "PARTICIPATION_RATE": 1.0}
+MODE_FILE = "scan_mode.json"
+INDEX_API = "https://m.stock.naver.com/api/index/{code}/basic"
+
 # Keyword override: any theme whose name matches (substring) one of these
 # patterns gets folded into the given keyword group, taking priority over
 # the automatic overlap-based merge. Edit this list, or keywords.json next to
@@ -359,6 +371,39 @@ def qualifies(rate, cap, amount=None):
     if rate >= MID_RATE and cap >= MID_CAP:
         return True
     return rate >= MIN_RATE and cap >= MIN_CAP
+
+
+def index_rates(fetch=None):
+    """코스피·코스닥 등락률(%). 못 읽은 지수는 빠진다."""
+    fetch = fetch or fetch_json
+    out = {}
+    for code in ("KOSPI", "KOSDAQ"):
+        try:
+            out[code] = num(fetch(INDEX_API.format(code=code)).get("fluctuationsRatio"))
+        except Exception as exc:                          # noqa: BLE001
+            print(f"[급락일] {code} 등락률을 못 읽었습니다: {exc}", file=sys.stderr)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def decide_mode(rates):
+    """지수 하나라도 CRASH_INDEX_RATE 이하면 급락일."""
+    crash = any(v <= CRASH_INDEX_RATE for v in rates.values())
+    return {"crash": crash, "index_rates": rates,
+            "rules": dict(CRASH_RULES) if crash else {}}
+
+
+def apply_mode(mode):
+    """급락일이면 모듈 문턱을 CRASH_RULES 로 바꾼다."""
+    for key, value in ((mode or {}).get("rules") or {}).items():
+        if key in CRASH_RULES:
+            globals()[key] = value
+
+
+def load_mode(out_dir):
+    try:
+        return json.loads((Path(out_dir) / MODE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def fetch_theme_list():
@@ -786,7 +831,11 @@ def build_output(final_groups, affinity=None):
                 print(f"[직접테마 소속] {p['keyword']} — {s['name']} {s['rate']:+.2f}% 뺌: "
                       f"{', '.join(sorted(mine & present))} 칸 종목", file=sys.stderr)
                 continue
-            why = misfit(s["name"], [p["keyword"]] + p["source_themes"], affinity)
+            # 사람이 직접 테마에 적어 둔 종목은 과거 기록과 달라도 그 칸에 둔다.
+            # 새로 만든 테마는 기록이 없어 모든 종목이 '오배정'으로 빠진다
+            # (2026-10-12 금호 관련주의 금호건설 +23.52%).
+            why = None if p["keyword"] in mine else misfit(
+                s["name"], [p["keyword"]] + p["source_themes"], affinity)
             if why:
                 print(f"[오배정] {p['keyword']} — {s['name']} {s['rate']:+.2f}% 뺌: {why}",
                       file=sys.stderr)
@@ -835,7 +884,14 @@ def main():
         with open(out_dir / "raw_scan.json", encoding="utf-8") as f:
             raw = json.load(f)
         print(f"[regroup] reusing raw_scan.json ({len(raw)} themes)", file=sys.stderr)
+        apply_mode(load_mode(out_dir))
     else:
+        mode = decide_mode(index_rates())
+        apply_mode(mode)
+        (out_dir / MODE_FILE).write_text(json.dumps(mode, ensure_ascii=False), encoding="utf-8")
+        if mode["crash"]:
+            print(f"[급락일] 지수 {mode['index_rates']} — 문턱을 낮춥니다: {mode['rules']}",
+                  file=sys.stderr)
         raw = scan_themes()
         with open(out_dir / "raw_scan.json", "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)
