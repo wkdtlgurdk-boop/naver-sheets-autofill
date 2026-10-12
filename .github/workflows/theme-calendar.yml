@@ -473,6 +473,7 @@ jobs:
           path: |
             raw_scan.json
             final_groups.json
+            scan_mode.json
             final_groups.txt
             market_summary.json
             cards/**
