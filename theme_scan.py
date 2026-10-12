@@ -55,17 +55,16 @@ NEW_LISTING_YEARS = 2
 PARTICIPATION_RATE = 3.0   # % — 참여율을 셀 때 "올랐다"고 보는 문턱
 MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 
-# 급락일 완화 (2026-10-13 사용자 지정). 10/12 코스피 -3.65%·코스닥 -4.83% 날
+# 완화 기준 (2026-10-13 사용자 지정). 10/12 코스피 -3.65%·코스닥 -4.83% 날
 # 264개 테마 중 하나도 문턱을 넘지 못해 시트·카드·스레드·쇼츠가 통째로 빠졌다.
-# 지수가 크게 빠진 날에는 "오른 테마"가 아니라 "버틴 테마"가 그날의 주도주라서,
-# 코스피·코스닥 중 하나라도 CRASH_INDEX_RATE 이하이면 아래 값으로 문턱을 낮춘다.
-# 그날 시세로 재 보니 +3%/+8%·2종목·참여 1% 에서 해운·시멘트 등이 잡혔다.
+# 기존 기준으로 돌려 그룹이 0개이면, 같은 시세로 아래 값을 써서 한 번 더 돈다.
+# 지수가 몇 % 빠졌는지로 정하지 않는다 -- 지수가 조금 빠져도 오른 테마가 없는
+# 날이 있고, 크게 빠져도 오른 테마가 있는 날이 있다(사용자 지정).
+# 그날 시세로 재 보니 +3%/+8%·2종목·참여 1% 에서 금호 관련주·해운이 잡혔다.
 # 정한 값은 MODE_FILE 에 남겨 --regroup 과 cards.py 가 같은 기준을 쓴다.
-CRASH_INDEX_RATE = -2.0
-CRASH_RULES = {"MIN_RATE": 3.0, "MID_RATE": 8.0, "MIN_COUNT": 2,
-               "PARTICIPATION_RATE": 1.0}
+RELAXED_RULES = {"MIN_RATE": 3.0, "MID_RATE": 8.0, "MIN_COUNT": 2,
+                 "PARTICIPATION_RATE": 1.0}
 MODE_FILE = "scan_mode.json"
-INDEX_API = "https://m.stock.naver.com/api/index/{code}/basic"
 
 # Keyword override: any theme whose name matches (substring) one of these
 # patterns gets folded into the given keyword group, taking priority over
@@ -373,30 +372,27 @@ def qualifies(rate, cap, amount=None):
     return rate >= MIN_RATE and cap >= MIN_CAP
 
 
-def index_rates(fetch=None):
-    """코스피·코스닥 등락률(%). 못 읽은 지수는 빠진다."""
-    fetch = fetch or fetch_json
-    out = {}
-    for code in ("KOSPI", "KOSDAQ"):
-        try:
-            out[code] = num(fetch(INDEX_API.format(code=code)).get("fluctuationsRatio"))
-        except Exception as exc:                          # noqa: BLE001
-            print(f"[급락일] {code} 등락률을 못 읽었습니다: {exc}", file=sys.stderr)
-    return {k: v for k, v in out.items() if v is not None}
-
-
-def decide_mode(rates):
-    """지수 하나라도 CRASH_INDEX_RATE 이하면 급락일."""
-    crash = any(v <= CRASH_INDEX_RATE for v in rates.values())
-    return {"crash": crash, "index_rates": rates,
-            "rules": dict(CRASH_RULES) if crash else {}}
-
-
 def apply_mode(mode):
-    """급락일이면 모듈 문턱을 CRASH_RULES 로 바꾼다."""
+    """완화 실행이면 모듈 문턱을 RELAXED_RULES 로 바꾼다."""
     for key, value in ((mode or {}).get("rules") or {}).items():
-        if key in CRASH_RULES:
+        if key in RELAXED_RULES:
             globals()[key] = value
+
+
+def memoize_fetches():
+    """완화 기준으로 다시 돌 때 네이버를 또 부르지 않도록 시세 호출을 기억한다.
+    두 번째 스캔이 첫 번째와 같은 순간의 시세를 보는 것도 이 때문이다."""
+    global fetch_theme_list, fetch_theme_stocks, fetch_stock_by_code
+    def memo(fn):
+        seen = {}
+        def wrapped(*args):
+            if args not in seen:
+                seen[args] = fn(*args)
+            return seen[args]
+        return wrapped
+    fetch_theme_list = memo(fetch_theme_list)
+    fetch_theme_stocks = memo(fetch_theme_stocks)
+    fetch_stock_by_code = memo(fetch_stock_by_code)
 
 
 def load_mode(out_dir):
@@ -870,6 +866,18 @@ def build_output(final_groups, affinity=None):
     return out
 
 
+def derive(raw):
+    """스캔 결과 -> (거르기 전 raw, 최종 그룹). raw_scan.json 은 거르기 전을 담는다.
+    제외가 오늘 무엇을 지웠는지 나중에 확인하려면 지워지기 전 모습이 남아야 한다."""
+    scanned = len(raw)
+    kept = filter_themes(raw)
+    print(f"[filter] {scanned}개 중 {len(kept)}개 통과 "
+          f"({scanned - len(kept)}개 제외)", file=sys.stderr)
+    final = build_output(group_themes(kept))
+    print(f"themes qualifying: {len(kept)}", file=sys.stderr)
+    return raw, final
+
+
 def main():
     args = [a for a in sys.argv[1:] if a != "--regroup"]
     regroup = "--regroup" in sys.argv
@@ -885,26 +893,20 @@ def main():
             raw = json.load(f)
         print(f"[regroup] reusing raw_scan.json ({len(raw)} themes)", file=sys.stderr)
         apply_mode(load_mode(out_dir))
+        raw, final = derive(raw)
     else:
-        mode = decide_mode(index_rates())
-        apply_mode(mode)
+        memoize_fetches()
+        mode = {"relaxed": False, "rules": {}}
+        raw, final = derive(scan_themes())
+        if not final:
+            mode = {"relaxed": True, "rules": dict(RELAXED_RULES)}
+            print(f"[완화] 기존 기준으로 그룹이 0개라 문턱을 낮춰 다시 돕니다: "
+                  f"{mode['rules']}", file=sys.stderr)
+            apply_mode(mode)
+            raw, final = derive(scan_themes())
         (out_dir / MODE_FILE).write_text(json.dumps(mode, ensure_ascii=False), encoding="utf-8")
-        if mode["crash"]:
-            print(f"[급락일] 지수 {mode['index_rates']} — 문턱을 낮춥니다: {mode['rules']}",
-                  file=sys.stderr)
-        raw = scan_themes()
         with open(out_dir / "raw_scan.json", "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)
-
-    # raw_scan.json 은 거른 뒤가 아니라 거르기 전을 담는다. 제외가 오늘 무엇을
-    # 지웠는지 나중에 확인하려면 지워지기 전 모습이 남아 있어야 한다.
-    scanned = len(raw)
-    raw = filter_themes(raw)
-    print(f"[filter] {scanned}개 중 {len(raw)}개 통과 "
-          f"({scanned - len(raw)}개 제외)", file=sys.stderr)
-
-    final_groups = group_themes(raw)
-    final = build_output(final_groups)
 
     with open(out_dir / "final_groups.json", "w", encoding="utf-8") as f:
         json.dump(final, f, ensure_ascii=False, indent=2)
@@ -916,7 +918,6 @@ def main():
             for s in g["top5"]:
                 f.write(f"  - {s['name']}({s['code']}): 등락률 {s['rate']:+.2f}%, 시가총액 {s['cap']:,}억, 거래대금 {s['amount']:,}백만\n")
 
-    print(f"themes qualifying: {len(raw)}", file=sys.stderr)
     print(f"final groups: {len(final)}", file=sys.stderr)
 
 

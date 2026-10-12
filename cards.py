@@ -82,10 +82,10 @@ def header_date(now: datetime) -> str:
 
 def footer_text() -> str:
     """조건을 카드 밑에 적어 둔다. theme_scan 의 상수에서 만들어야 낡지 않는다.
-    급락일에는 스캔이 남긴 scan_mode.json 의 낮춘 문턱을 적는다."""
+    기존 기준으로 테마가 없어 완화 기준으로 돈 날은 scan_mode.json 의 낮춘 문턱을 적는다."""
     mode = ts.load_mode(Path(__file__).parent)
     ts.apply_mode(mode)
-    prefix = "급락일 완화 기준 · " if mode.get("crash") else ""
+    prefix = "완화 기준 · " if mode.get("relaxed") else ""
     return (f"{prefix}시가총액 {ts.MIN_CAP:,}억↑·상승률 {ts.MIN_RATE:g}%↑ "
             f"({ts.MID_RATE:g}%↑는 {ts.MID_CAP:,}억↑, {ts.SURGE_RATE:g}%↑는 "
             f"{ts.SURGE_CAP:,}억↑) 종목 {ts.MIN_COUNT}개 이상인 테마")
