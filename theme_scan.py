@@ -71,10 +71,8 @@ MODE_FILE = "scan_mode.json"
 # the automatic overlap-based merge. Edit this list, or keywords.json next to
 # it, to steer future runs.
 KEYWORD_PATTERNS = {
-    # 전기차 세 테마는 한 칸으로 묶는다 (2026-10-14 사용자 지정). 맨 앞에 둔다 —
-    # keyword_for 는 정확한 이름을 먼저, 그중에서도 이 목록을 keywords.json 보다
-    # 먼저 보므로, Claude 가 그날 '전기차'를 ESS 등과 다른 이름으로 묶어도 이 칸이 이긴다.
-    "전기차": ["전기차", "전기차 화재 방지(배터리 열폭주 등)", "전기차(충전소/충전기)"],
+    # 전기차 세 테마는 custom_themes.json 의 직접 테마 '전기차' 가 대신한다
+    # (2026-10-14 사용자 지정, 2차전지 종목 제외).
     "바이오": [
         "코로나19", "백신", "진단시약", "방역", "바이오시밀러", "제약업체",
         "비만치료제", "mRNA", "치매", "면역항암제",
