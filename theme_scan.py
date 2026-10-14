@@ -71,8 +71,6 @@ MODE_FILE = "scan_mode.json"
 # the automatic overlap-based merge. Edit this list, or keywords.json next to
 # it, to steer future runs.
 KEYWORD_PATTERNS = {
-    # 전기차 세 테마는 custom_themes.json 의 직접 테마 '전기차' 가 대신한다
-    # (2026-10-14 사용자 지정, 2차전지 종목 제외).
     "바이오": [
         "코로나19", "백신", "진단시약", "방역", "바이오시밀러", "제약업체",
         "비만치료제", "mRNA", "치매", "면역항암제",
