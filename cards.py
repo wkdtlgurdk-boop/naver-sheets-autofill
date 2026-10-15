@@ -41,6 +41,7 @@ MUTED   = (140, 131, 123)   # 라벨·부제
 DIM     = (110, 101, 94)    # 푸터
 DATE    = (160, 150, 141)   # 헤더 날짜
 RED     = (255, 90, 78)     # 상승률
+BLUE    = (90, 150, 255)    # 하락률 (수급 카드에는 내린 종목도 나온다)
 GOLD    = (232, 182, 76)    # 배지, 1위
 RULE_H  = (50, 42, 38)      # 헤더 아래 (2px)
 RULE_S  = (36, 30, 27)      # 섹션 구분 (2px)
@@ -109,6 +110,11 @@ def eok(amount_mn: float) -> int:
     return round(amount_mn / 100)
 
 
+def tone(rate: float):
+    """오르면 빨강, 내리면 파랑. 테마 카드는 늘 빨강이지만 수급 카드엔 내린 종목이 있다."""
+    return RED if rate >= 0 else BLUE
+
+
 def avg_rate(stocks: list[dict]) -> float:
     return sum(s["rate"] for s in stocks) / len(stocks) if stocks else 0.0
 
@@ -170,7 +176,7 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
     # 요약 두 칸: 평균상승률 / 거래대금
     c.d.text((M, 398), "평균상승률", font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
     c.d.text((M, 455), f"{avg_rate(top):+.2f}%", font=font("black", SZ["stat_value"]),
-             fill=RED, anchor="ls")
+             fill=tone(avg_rate(top)), anchor="ls")
     c.d.text((378, 398), amount_label, font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
     c.d.text((378, 455), f"{sum(eok(s['amount']) for s in top):,}억",
              font=font("black", SZ["stat_value"]), fill=INK, anchor="ls")
@@ -182,7 +188,7 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
         c.d.text((M, y), s["name"], font=font("bold", SZ["row_name"]),
                  fill=GOLD if i == 0 else INK, anchor="ls")
         c.d.text((813, y), f"{s['rate']:+.2f}%", font=font("black", SZ["row_rate"]),
-                 fill=RED, anchor="rs")
+                 fill=tone(s["rate"]), anchor="rs")
         c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("medium", SZ["row_amt"]),
                  fill=MUTED, anchor="rs")
         if i < len(top) - 1:
@@ -218,7 +224,7 @@ def summary_card(now: datetime, groups: list[dict], market: dict, *,
         c.d.text((x, 518), head, font=f, fill=MUTED, anchor="ls")
         won = m.get("foreign_eok") or 0
         c.d.text((x + c.d.textlength(head, font=f), 518), f"{won:+,}억",
-                 font=font("bold", SZ["idx_sub"]), fill=RED if won >= 0 else (90, 150, 255),
+                 font=font("bold", SZ["idx_sub"]), fill=RED if won >= 0 else BLUE,
                  anchor="ls")
     c.d.rectangle([517, 378, 518, 522], fill=RULE_S)
     c.d.rectangle([M, 555, R, 556], fill=RULE_S)
@@ -234,7 +240,7 @@ def summary_card(now: datetime, groups: list[dict], market: dict, *,
         room = 814 - c.d.textlength(rate, font=rate_f) - NAME_GAP - 148
         name_f, name = shrink(c.d, g["keyword"], "bold", SZ["m_name"], room, MIN_M_NAME)
         c.d.text((148, y), name, font=name_f, fill=GOLD if i == 0 else INK, anchor="ls")
-        c.d.text((814, y), rate, font=rate_f, fill=RED, anchor="rs")
+        c.d.text((814, y), rate, font=rate_f, fill=tone(avg_rate(g['top5'])), anchor="rs")
         c.d.text((1008, y), f"{sum(eok(s['amount']) for s in g['top5']):,}억",
                  font=font("medium", SZ["m_amt"]), fill=MUTED, anchor="rs")
         if i < len(groups) - 1:

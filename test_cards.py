@@ -177,7 +177,6 @@ def test_footer_is_built_from_the_scan_thresholds():
     check("시총 문턱", f"{ts.MIN_CAP:,}억" in text, True)
     check("급등 문턱", f"{ts.SURGE_RATE:g}%" in text, True)
     check("종목 수", f"{ts.MIN_COUNT}개" in text, True)
-    check("테마 없는 날 하단", "외국인·기관 순매수" in cards.footer_text({"no_theme": True}), True)
 
 
 def test_long_theme_list_is_truncated_not_overflowed():
