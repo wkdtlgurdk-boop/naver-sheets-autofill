@@ -655,6 +655,38 @@ def test_shipped_exclusion_file_is_readable():
           ts.stock_exclusion(beomhan, "연료전지", None, ex["stocks"]), None)
 
 
+def test_no_theme_day_uses_investor_top_buys():
+    def fake_fetch(investor, market):
+        base = {"FOREIGNER": [("000660", 900), ("069500", 800), ("005930", 500)],
+                "ORGANIZATION": [("035420", 700), ("000660", 300)]}[investor]
+        extra = [("247540", 600)] if market == "KOSDAQ" else []
+        return [{"itemcode": c, "itemname": c, "accTradeAmount": a * 1_000_000_00,
+                 "bizdateFrom": "20261015", "estimated": False} for c, a in base + extra]
+
+    def fake_quote(code):
+        return {"name": f"종목{code}", "code": code, "rate": -3.0, "cap": 10000, "amount": 1,
+                "end_type": "etf" if code == "069500" else "stock"}
+
+    got = ts.investor_groups("20261015", fake_fetch, fake_quote)
+    assert [g["keyword"] for g in got] == ["외국인 순매수", "기관 순매수"], got
+    # 금액순, ETF(069500) 제외, 코스피·코스닥에 같은 종목이 겹치면 한 번만
+    assert [q["code"] for q in got[0]["top5"]] == ["000660", "247540", "005930"], got[0]["top5"]
+    assert got[0]["top5"][0]["net_buy"] == 90000, got[0]["top5"][0]
+    assert [q["code"] for q in got[1]["top5"]] == ["035420", "247540", "000660"], got[1]["top5"]
+
+
+def test_no_theme_day_waits_for_settled_data():
+    def stale(investor, market):
+        return [{"itemcode": "000660", "accTradeAmount": 1, "bizdateFrom": "20261014",
+                 "estimated": False}]
+    try:
+        ts.investor_groups("20261015", stale, lambda c: None)
+    except SystemExit as exc:
+        assert "확정치가 아직" in str(exc), exc
+    else:
+        raise AssertionError("어제 자료로 오늘 칸을 채우면 안 된다")
+
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

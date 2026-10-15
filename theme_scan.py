@@ -17,10 +17,12 @@ Writes to <output_dir> (default: script's own directory):
     - final_groups.json  : final merged groups with top5 stocks each
     - final_groups.txt   : human-readable version of the above
 """
+import os
 import re
 import sys
 import json
 import time
+from datetime import datetime, timedelta, timezone
 import urllib.request
 from pathlib import Path
 
@@ -379,6 +381,57 @@ def apply_mode(mode):
             globals()[key] = value
 
 
+# 주도 테마가 없는 날 (10/15 사용자 지정). 완화 기준으로도 그룹이 0개면 테마를
+# 억지로 만들지 않고, 그날 외국인·기관이 가장 많이 순매수한 종목 5개씩을 두 칸으로
+# 올린다. 순매수 순위는 수급 시트(supply_demand.py)가 쓰는 같은 네이버 API 에서
+# 코스피·코스닥을 합쳐 금액순으로 뽑고, ETF·ETN 은 뺀다.
+NO_THEME_TOP = 5
+INVESTOR_SLOTS = (("FOREIGNER", "외국인 순매수"), ("ORGANIZATION", "기관 순매수"))
+
+
+def investor_groups(day, fetch=None, quote=None):
+    """외국인·기관 순매수 상위 그룹 두 개. 오늘 확정치가 아니면 멈춘다(다음 회차가 다시 돈다)."""
+    import supply_demand as sd
+    fetch = fetch or sd.fetch
+    quote = quote or fetch_stock_by_code
+    out = []
+    for investor, label in INVESTOR_SLOTS:
+        rows = []
+        for market in ("KOSPI", "KOSDAQ"):
+            got = fetch(investor, market) or []
+            if not got:
+                raise SystemExit(f"[중단] {label} {market} 순위가 비었습니다.")
+            stamp = str(got[0].get("bizdateFrom") or "")
+            if stamp != day or got[0].get("estimated"):
+                raise SystemExit(f"[중단] {label} {market} 순위가 {stamp or '?'} 자"
+                                 f"{'(장중 추정치)' if got[0].get('estimated') else ''} — "
+                                 f"{day} 확정치가 아직 없습니다. 다음 회차에 다시 돕니다.")
+            rows += got
+        rows.sort(key=lambda r: -int(r.get("accTradeAmount") or 0))
+        top = []
+        for r in rows:
+            code = sd.item_code(r)
+            if not code or any(code == t["code"] for t in top):
+                continue
+            q = quote(code)
+            if not q or q.get("end_type") in ("etf", "etn"):
+                continue
+            q = dict(q, net_buy=round(int(r.get("accTradeAmount") or 0) / 1e6))
+            top.append(q)
+            if len(top) == NO_THEME_TOP:
+                break
+        print(f"[테마 없음] {label}: " + ", ".join(
+            f"{q['name']} {q['net_buy']:,}백만 {q['rate']:+.2f}%" for q in top), file=sys.stderr)
+        out.append({
+            "keyword": label,
+            "source_themes": [f"{label} 상위 (코스피·코스닥, 금액순)"],
+            "total_qualifying": len(top),
+            "members": [{"name": q["name"], "code": q["code"], "rate": q["rate"]} for q in top],
+            "top5": top,
+        })
+    return out
+
+
 def memoize_fetches():
     """완화 기준으로 다시 돌 때 네이버를 또 부르지 않도록 시세 호출을 기억한다.
     두 번째 스캔이 첫 번째와 같은 순간의 시세를 보는 것도 이 때문이다."""
@@ -485,7 +538,8 @@ def fetch_stock_by_code(code):
     if rate is None or cap is None:
         return None
     return {"name": basic.get("stockName") or info.get("stockName") or code, "code": code,
-            "rate": rate, "cap": int(cap), "amount": int((amount or 0) * 100)}
+            "rate": rate, "cap": int(cap), "amount": int((amount or 0) * 100),
+            "end_type": basic.get("stockEndType") or "stock"}
 
 
 CUSTOM_FILE = Path(__file__).with_name("custom_themes.json")
@@ -892,8 +946,12 @@ def main():
         with open(out_dir / "raw_scan.json", encoding="utf-8") as f:
             raw = json.load(f)
         print(f"[regroup] reusing raw_scan.json ({len(raw)} themes)", file=sys.stderr)
-        apply_mode(load_mode(out_dir))
+        mode = load_mode(out_dir)
+        apply_mode(mode)
         raw, final = derive(raw)
+        if mode.get("no_theme"):
+            # 테마가 없던 날 고른 순매수 칸을 그대로 쓴다. 다시 묶어도 테마는 0개다.
+            final = mode.get("groups") or []
     else:
         memoize_fetches()
         mode = {"relaxed": False, "rules": {}}
@@ -904,6 +962,13 @@ def main():
                   f"{mode['rules']}", file=sys.stderr)
             apply_mode(mode)
             raw, final = derive(scan_themes())
+        if not final:
+            kst = timezone(timedelta(hours=9))
+            day = (os.environ.get("THEME_DAY") or datetime.now(kst).strftime("%Y-%m-%d")).replace("-", "")
+            print("[테마 없음] 완화 기준으로도 그룹이 0개 — 외국인·기관 순매수 상위로 대신합니다",
+                  file=sys.stderr)
+            final = investor_groups(day)
+            mode = dict(mode, no_theme=True, groups=final)
         (out_dir / MODE_FILE).write_text(json.dumps(mode, ensure_ascii=False), encoding="utf-8")
         with open(out_dir / "raw_scan.json", "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)
