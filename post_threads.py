@@ -168,7 +168,7 @@ def caption_supply(supply: list[dict], now: datetime) -> str:
         lines.append(g["keyword"])
         for i, st in enumerate(g["top5"], 1):
             net = st.get("net_buy", st.get("amount", 0))
-            lines.append(f"{i}. {st['name']} {cards.eok(net):+,}억 ({st['rate']:+.2f}%)")
+            lines.append(f"{i}. {st['name']} {cards.eok(net):+,}억")
         lines.append("")
     lines.append("오늘도 수고했개 🐾")
     return "\n".join(lines)[:TEXT_LIMIT]
@@ -222,18 +222,24 @@ def main() -> int:
     if overridden:
         print(f"[threads] THEME_AS_OF={now:%Y-%m-%d} 기준으로 올립니다.", file=sys.stderr)
     day = f"{now:%Y%m%d}"
-    card_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
+    args = [a for a in sys.argv[1:] if a != "--supply"]
+    card_dir = Path(args[0]) if args else here / "cards"
+    if "--supply" in sys.argv:
+        # 오늘의 수급 — 테마와 따로 매일 올린다 (10/15 사용자 지정, supply-demand 워크플로).
+        from supply_top import load_supply
+        posts = [("수급정리", sorted((card_dir / day / cards.SUPPLY_DIR).glob("*.png")),
+                  cards.SUPPLY_DIR, caption_supply(load_supply(here), now))]
+        return publish_all(posts, user_id, token, now, card_dir, day)
     groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
     if not groups and cards.no_theme_day():
-        # 주도 테마가 없는 날은 글을 둘로 나눈다 (10/15 사용자 지정):
-        # '오늘의 테마 없음' 한 장, 그리고 외국인·기관 순매수 상위를 '수급정리'로.
-        supply = cards.ts.supply_groups(here)
-        posts = [("시황정리", [card_dir / day / "01_monthly.png"], "", caption_no_theme(now)),
-                 ("수급정리", sorted((card_dir / day / cards.SUPPLY_DIR).glob("*.png")),
-                  cards.SUPPLY_DIR, caption_supply(supply, now))]
+        # 주도 테마가 없는 날: '오늘의 테마 없음' 한 장. 수급은 수급정리 글이 따로 있다.
+        posts = [("시황정리", [card_dir / day / "01_monthly.png"], "", caption_no_theme(now))]
     else:
         posts = [("시황정리", sorted((card_dir / day).glob("*.png")), "", caption(groups, now))]
+    return publish_all(posts, user_id, token, now, card_dir, day)
 
+
+def publish_all(posts, user_id: str, token: str, now: datetime, card_dir: Path, day: str) -> int:
     for kind, paths, sub, text in posts:
         # 같은 날 두 번 올리지 않는다. 시계가 둘이기 때문이다 -- Apps Script 가
         # 20:10 에 띄우고, 그게 안 뜬 날을 위해 GitHub cron 이 21:10 에 한 번 더
