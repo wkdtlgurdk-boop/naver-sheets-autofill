@@ -85,10 +85,12 @@ def no_theme_day() -> bool:
     return bool(ts.load_mode(Path(__file__).parent).get("no_theme"))
 
 
-def footer_text() -> str:
+def footer_text(mode: dict | None = None) -> str:
     """조건을 카드 밑에 적어 둔다. theme_scan 의 상수에서 만들어야 낡지 않는다.
-    기존 기준으로 테마가 없어 완화 기준으로 돈 날은 scan_mode.json 의 낮춘 문턱을 적는다."""
-    mode = ts.load_mode(Path(__file__).parent)
+    기존 기준으로 테마가 없어 완화 기준으로 돈 날은 scan_mode.json 의 낮춘 문턱을 적는다.
+    mode 를 주면 scan_mode.json 대신 그것을 쓴다 (시험용)."""
+    if mode is None:
+        mode = ts.load_mode(Path(__file__).parent)
     if mode.get("no_theme"):
         return "주도 테마 없는 날 · 외국인·기관 순매수 상위 5종목 (코스피·코스닥 합산, 순매수 금액순, ETF 제외)"
     ts.apply_mode(mode)
