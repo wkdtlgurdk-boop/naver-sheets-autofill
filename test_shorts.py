@@ -64,7 +64,19 @@ def test_cover_rows_come_in_one_at_a_time():
 
 def test_youtube_title_and_duplicate_mark():
     now = datetime(2026, 10, 2, 17, 0)
-    t = yt.title(FIXTURE, now)
+    # 러너의 scan_mode.json(그날 실제 모드)에 끌려가지 않게 모드를 고정한다
+    real = cards.no_theme_day
+    cards.no_theme_day = lambda: True
+    try:
+        t = yt.title(FIXTURE, now)
+    finally:
+        cards.no_theme_day = real
+    check("테마 없는 날 제목", "외인·기관 순매수" in t and "#shorts" in t, True)
+    cards.no_theme_day = lambda: False
+    try:
+        t = yt.title(FIXTURE, now)
+    finally:
+        cards.no_theme_day = real
     check("제목은 날짜 표식으로 시작", t.startswith(yt.date_mark(now)), True)
     check("제목 길이", len(t) <= yt.TITLE_LIMIT, True)
     check("#shorts", "#shorts" in t, True)
