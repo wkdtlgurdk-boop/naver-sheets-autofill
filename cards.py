@@ -82,8 +82,8 @@ def header_date(now: datetime) -> str:
 
 
 def no_theme_day() -> bool:
-    """주도 테마가 없는 날인가 (scan_mode.json). 그날은 '오늘의 테마 없음' 카드와
-    '오늘의 수급'(외국인·기관 순매수 상위) 카드를 따로 만든다."""
+    """주도 테마가 없는 날인가 (scan_mode.json). 그날은 '오늘의 테마 없음' 한 장만 만든다.
+    '오늘의 수급'(외국인·기관 순매수 상위)은 테마와 상관없이 매일 따로 만든다(--supply)."""
     return ts.no_theme_mode(Path(__file__).parent)
 
 
@@ -165,20 +165,25 @@ class Card:
 
 def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | None = None,
                amount_label: str = "거래대금", box_label: str = "묶은 테마",
-               footer: str | None = None) -> Card:
+               footer: str | None = None, show_rate: bool = True) -> Card:
     """테마 한 장. rank 는 거래대금 순위(배지의 '1 / 7').
-    '오늘의 수급' 카드도 이 판을 쓴다 — 금액 칸이 거래대금 대신 순매수다."""
+    '오늘의 수급' 카드도 이 판을 쓴다 — 금액 칸이 거래대금 대신 순매수고,
+    상승률은 적지 않는다(show_rate=False, 10/15 사용자 지정)."""
     c = Card(now, f"{rank} / {total}", footer)
     top = group["top5"]
     c.title(spaced(group["keyword"]),
             sub or f"조건 충족 {group['total_qualifying']}종목 중 상위 {len(top)}개")
 
-    # 요약 두 칸: 평균상승률 / 거래대금
-    c.d.text((M, 398), "평균상승률", font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
-    c.d.text((M, 455), f"{avg_rate(top):+.2f}%", font=font("black", SZ["stat_value"]),
-             fill=tone(avg_rate(top)), anchor="ls")
-    c.d.text((378, 398), amount_label, font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
-    c.d.text((378, 455), f"{sum(eok(s['amount']) for s in top):,}억",
+    # 요약 두 칸: 평균상승률 / 거래대금 (수급 카드는 금액 한 칸)
+    ax = 378
+    if show_rate:
+        c.d.text((M, 398), "평균상승률", font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
+        c.d.text((M, 455), f"{avg_rate(top):+.2f}%", font=font("black", SZ["stat_value"]),
+                 fill=tone(avg_rate(top)), anchor="ls")
+    else:
+        ax = M
+    c.d.text((ax, 398), amount_label, font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
+    c.d.text((ax, 455), f"{sum(eok(s['amount']) for s in top):,}억",
              font=font("black", SZ["stat_value"]), fill=INK, anchor="ls")
     c.d.rectangle([M, 515, R, 516], fill=RULE_S)
 
@@ -187,10 +192,14 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
     for i, s in enumerate(top):
         c.d.text((M, y), s["name"], font=font("bold", SZ["row_name"]),
                  fill=GOLD if i == 0 else INK, anchor="ls")
-        c.d.text((813, y), f"{s['rate']:+.2f}%", font=font("black", SZ["row_rate"]),
-                 fill=tone(s["rate"]), anchor="rs")
-        c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("medium", SZ["row_amt"]),
-                 fill=MUTED, anchor="rs")
+        if show_rate:
+            c.d.text((813, y), f"{s['rate']:+.2f}%", font=font("black", SZ["row_rate"]),
+                     fill=tone(s["rate"]), anchor="rs")
+            c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("medium", SZ["row_amt"]),
+                     fill=MUTED, anchor="rs")
+        else:
+            c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("black", SZ["row_rate"]),
+                     fill=INK, anchor="rs")
         if i < len(top) - 1:
             c.row_rule(y + 32)
         y += 92
@@ -207,7 +216,7 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
 
 def summary_card(now: datetime, groups: list[dict], market: dict, *,
                  title: str = "오늘의 테마", sub: str | None = None,
-                 footer: str | None = None) -> Card:
+                 footer: str | None = None, show_rate: bool = True) -> Card:
     c = Card(now, "MONTHLY", footer)
     c.title(title, sub or f"조건 충족 테마 {len(groups)}개 · 거래대금 순")
 
@@ -233,16 +242,26 @@ def summary_card(now: datetime, groups: list[dict], market: dict, *,
     for i, g in enumerate(groups):
         c.d.text((M, y), str(i + 1), font=font("medium", SZ["m_rank"]),
                  fill=GOLD if i == 0 else MUTED, anchor="ls")
-        rate = f"{avg_rate(g['top5']):+.2f}%"
+        amt = f"{sum(eok(s['amount']) for s in g['top5']):,}억"
         rate_f = font("black", SZ["m_rate"])
+        if not show_rate:
+            # 수급 요약: 상승률 없이 순매수 합만 오른쪽에 크게.
+            room = 1008 - c.d.textlength(amt, font=rate_f) - NAME_GAP - 148
+            name_f, name = shrink(c.d, g["keyword"], "bold", SZ["m_name"], room, MIN_M_NAME)
+            c.d.text((148, y), name, font=name_f, fill=GOLD if i == 0 else INK, anchor="ls")
+            c.d.text((1008, y), amt, font=rate_f, fill=INK, anchor="rs")
+            if i < len(groups) - 1:
+                c.row_rule(y + 23)
+            y += 72
+            continue
+        rate = f"{avg_rate(g['top5']):+.2f}%"
         # 이름은 상승률 숫자 왼쪽까지만 쓴다. 10/2 요약 카드에서 긴 이름이
         # 상승률 위에 겹쳐 찍혔다 — 넘치면 글자를 줄이고, 그래도 넘치면 자른다.
         room = 814 - c.d.textlength(rate, font=rate_f) - NAME_GAP - 148
         name_f, name = shrink(c.d, g["keyword"], "bold", SZ["m_name"], room, MIN_M_NAME)
         c.d.text((148, y), name, font=name_f, fill=GOLD if i == 0 else INK, anchor="ls")
         c.d.text((814, y), rate, font=rate_f, fill=tone(avg_rate(g['top5'])), anchor="rs")
-        c.d.text((1008, y), f"{sum(eok(s['amount']) for s in g['top5']):,}억",
-                 font=font("medium", SZ["m_amt"]), fill=MUTED, anchor="rs")
+        c.d.text((1008, y), amt, font=font("medium", SZ["m_amt"]), fill=MUTED, anchor="rs")
         if i < len(groups) - 1:
             c.row_rule(y + 23)
         y += 72
@@ -256,7 +275,7 @@ def no_theme_card(now: datetime, market: dict) -> Card:
              fill=INK, anchor="mm")
     c.d.text((W // 2, 880), "조건을 채운 테마가 한 곳도 나오지 않았습니다",
              font=font("medium", SZ["box_body"]), fill=MUTED, anchor="mm")
-    c.d.text((W // 2, 940), "외국인·기관 순매수 상위는 '오늘의 수급'에서",
+    c.d.text((W // 2, 940), "외국인·기관 순매수 상위는 '오늘의 수급' 글에서",
              font=font("medium", SZ["box_body"]), fill=GOLD, anchor="mm")
     return c
 
@@ -267,24 +286,26 @@ def supply_view(group: dict) -> dict:
     return dict(group, top5=top)
 
 
-def build_no_theme(out_dir: Path, supply: list[dict], market: dict, now: datetime) -> list[Path]:
-    """테마 없는 날: <날짜>/01_monthly.png 한 장(오늘의 테마 없음)과
-    <날짜>/supply/ 아래 '오늘의 수급' 요약 + 외국인·기관 카드. 스레드엔 두 글로 나눠 올린다."""
+def build_no_theme(out_dir: Path, market: dict, now: datetime) -> list[Path]:
+    """테마 없는 날: <날짜>/01_monthly.png 한 장(오늘의 테마 없음)."""
+    return [no_theme_card(now, market).save(out_dir / f"{now:%Y%m%d}" / "01_monthly.png")]
+
+
+def build_supply(out_dir: Path, supply: list[dict], market: dict, now: datetime) -> list[Path]:
+    """'오늘의 수급': <날짜>/supply/ 아래 요약 + 외국인·기관 카드. 금액은 순매수, 상승률은 없다."""
     day = out_dir / f"{now:%Y%m%d}"
-    made = [no_theme_card(now, market).save(day / "01_monthly.png")]
     groups = [supply_view(g) for g in supply]
-    if not groups:
-        return made
+    made = []
     made.append(summary_card(now, groups, market, title="오늘의 수급",
                              sub=f"외국인·기관 순매수 상위 {ts.NO_THEME_TOP}종목 · 순매수 금액",
-                             footer=SUPPLY_FOOTER)
+                             footer=SUPPLY_FOOTER, show_rate=False)
                 .save(day / SUPPLY_DIR / "01_summary.png"))
     for i, g in enumerate(groups, 1):
         safe = "".join(ch for ch in g["keyword"] if ch.isalnum())
         made.append(theme_card(now, g, i, len(groups),
                                sub=f"코스피·코스닥 순매수 금액 상위 {len(g['top5'])}종목",
                                amount_label="순매수", box_label="기준",
-                               footer=SUPPLY_FOOTER)
+                               footer=SUPPLY_FOOTER, show_rate=False)
                     .save(day / SUPPLY_DIR / f"{i + 1:02d}_{safe}.png"))
     return made
 
@@ -344,9 +365,23 @@ def load(path: Path):
 
 def main() -> int:
     here = Path(__file__).parent
-    out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
-    groups = load(here / "final_groups.json")
+    args = [a for a in sys.argv[1:] if a != "--supply"]
+    out_dir = Path(args[0]) if args else here / "cards"
     market = load(here / "market_summary.json")
+    if "--supply" in sys.argv:
+        from supply_top import load_supply
+        supply = load_supply(here)
+        if not supply:
+            raise SystemExit("[중단] supply_groups.json 이 비었습니다 — supply_top.py 를 먼저.")
+        if not market:
+            raise SystemExit("[중단] 지수 요약이 비어 있습니다 — market_summary.py 를 먼저.")
+        now, _ = as_of()
+        made = build_supply(out_dir, supply, market, now)
+        for p in made:
+            print(f"  {p}")
+        print(f"수급 카드 {len(made)}장")
+        return 0
+    groups = load(here / "final_groups.json")
     no_theme = not groups and no_theme_day()
     if not groups and not no_theme:
         raise SystemExit("[중단] 그룹이 0개입니다. 카드를 만들지 않습니다.")
@@ -361,8 +396,8 @@ def main() -> int:
     if overridden:
         print(f"[주의] THEME_AS_OF={now:%Y-%m-%d} — 이 날짜로 카드를 만듭니다.")
     if no_theme:
-        print("주도 테마 없음 — '오늘의 테마 없음' 카드와 '오늘의 수급' 카드를 따로 만듭니다")
-        made = build_no_theme(out_dir, ts.supply_groups(here), market, now)
+        print("주도 테마 없음 — '오늘의 테마 없음' 카드 한 장을 만듭니다")
+        made = build_no_theme(out_dir, market, now)
     else:
         made = build(out_dir, groups, market, now)
     for p in made:

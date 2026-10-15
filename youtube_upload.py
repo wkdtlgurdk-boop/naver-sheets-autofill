@@ -77,14 +77,14 @@ def ts_top() -> int:
     return cards.ts.NO_THEME_TOP
 
 
-def supply_day(groups: list[dict]) -> bool:
-    """주도 테마가 없는 날 — 쇼츠는 '오늘의 수급'(외국인·기관 순매수) 영상이다."""
-    return not groups and cards.no_theme_day()
+SUPPLY_MARK = "오늘의 수급"
+
+
+def supply_title(now: datetime) -> str:
+    return f"{date_mark(now)} {SUPPLY_MARK} · 외인·기관 순매수 TOP {ts_top()} #shorts"
 
 
 def title(groups: list[dict], now: datetime) -> str:
-    if supply_day(groups):
-        return f"{date_mark(now)} 오늘의 수급 · 외인·기관 순매수 TOP {ts_top()} #shorts"
     top = cards.ranked(groups)[0]["keyword"] if groups else ""
     t = f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} | 1위 {top} #shorts"
     return t if len(t) <= TITLE_LIMIT else f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} #shorts"
@@ -103,11 +103,11 @@ def tags(groups: list[dict]) -> list[str]:
 
 
 def supply_description(supply: list[dict], now: datetime) -> str:
-    lines = [f"{now.year}년 {now.month}월 {now.day}일 장 마감 수급 정리 — 오늘은 주도 테마가 없었습니다", ""]
+    lines = [f"{now.year}년 {now.month}월 {now.day}일 장 마감 수급 정리 — 외국인·기관 순매수 상위", ""]
     for g in supply:
         lines.append(g["keyword"])
         for i, s in enumerate(g["top5"], 1):
-            lines.append(f"{i}. {s['name']} {cards.eok(s.get('net_buy', 0)):+,}억 ({s['rate']:+.2f}%)")
+            lines.append(f"{i}. {s['name']} {cards.eok(s.get('net_buy', 0)):+,}억")
         lines.append("")
     lines += [cards.SUPPLY_FOOTER, "투자 권유가 아닌 시세 정리입니다.", "",
               "#shorts #오늘의수급 #외국인순매수 #기관순매수"]
@@ -125,7 +125,7 @@ def description(groups: list[dict], now: datetime) -> str:
     return "\n".join(lines)[:DESC_LIMIT]
 
 
-def already_uploaded(token: str, now: datetime) -> str | None:
+def already_uploaded(token: str, now: datetime, supply: bool = False) -> str | None:
     """내 채널 최근 업로드 50개 중 제목이 그날 표식으로 시작하는 영상의 id.
 
     확인에 실패하면 막지 않는다 — 한 번 더 올라가는 것보다 그날 영상이 통째로
@@ -143,7 +143,9 @@ def already_uploaded(token: str, now: datetime) -> str | None:
     mark = date_mark(now)
     for it in items:
         sn = it.get("snippet") or {}
-        if (sn.get("title") or "").startswith(mark):
+        t = sn.get("title") or ""
+        # 하루에 영상이 둘(테마·수급)이라 종류까지 본다.
+        if t.startswith(mark) and (SUPPLY_MARK in t) == supply:
             return (sn.get("resourceId") or {}).get("videoId")
     return None
 
@@ -174,23 +176,27 @@ def main() -> int:
               "올리려면 YT_ALLOW_BACKFILL=1 을 주세요.")
         return 0
 
-    video = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "shorts" / f"{now:%Y%m%d}.mp4"
+    supply = "--supply" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--supply"]
+    from shorts import video_name
+    video = Path(args[0]) if args else here / "shorts" / video_name(f"{now:%Y%m%d}", supply)
     if not video.exists():
         return give_up(f"{video} 이 없습니다 (shorts.py 가 영상을 만들지 못한 날)")
-    groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
+    if supply:
+        from supply_top import load_supply
+        groups = load_supply(here)
+        head, desc, tag = supply_title(now), supply_description(groups, now), tags(groups)
+    else:
+        groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
+        head, desc, tag = title(groups, now), description(groups, now), tags(groups)
 
     privacy = os.environ.get("YT_PRIVACY", "public")
     try:
         token = access_token(cid, secret, refresh)
-        done = already_uploaded(token, now)
+        done = already_uploaded(token, now, supply)
         if done and not backfill_ok:
             return give_up(f"{date_mark(now)} 영상이 이미 올라가 있습니다 (https://youtu.be/{done})")
-        if supply_day(groups):
-            supply = cards.ts.supply_groups(here)
-            desc, tag = supply_description(supply, now), tags(supply)
-        else:
-            desc, tag = description(groups, now), tags(groups)
-        meta = {"snippet": {"title": title(groups, now), "description": desc,
+        meta = {"snippet": {"title": head, "description": desc,
                             "tags": tag,
                             "categoryId": CATEGORY, "defaultLanguage": "ko"},
                 "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}

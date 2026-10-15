@@ -47,7 +47,7 @@ concurrency:
 jobs:
   fill:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -124,3 +124,75 @@ jobs:
           git diff --cached --quiet && echo "no feed change" && exit 0
           git commit -m "supply feed $(TZ=Asia/Seoul date +%Y%m%d)"
           git push origin HEAD:main
+
+      # 오늘의 수급 (10/15 사용자 지정): 외국인·기관 순매수 상위 5종목씩을 테마와
+      # 따로 매일 스레드(수급정리)와 유튜브 쇼츠로 올린다. 확정치로 시트를 쓴 실행
+      # (supply_today.json 이 생긴 실행)에서만 돈다. 하루 세 번 도는 크론이 모두
+      # 여기까지 오더라도 스레드·유튜브 쪽이 그 날 수급 글·영상을 보고 멈춘다.
+      - name: 오늘의 수급 — 대상일
+        id: supply_post
+        if: success()
+        run: |
+          if [ ! -f supply_today.json ]; then
+            echo "확정된 오늘치가 없습니다 — '오늘의 수급'을 올리지 않습니다."
+            echo "go=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "THEME_DAY=$(python as_of.py)" >> "$GITHUB_ENV"
+          echo "go=1" >> "$GITHUB_OUTPUT"
+
+      - name: 오늘의 수급 — 순위와 지수
+        if: steps.supply_post.outputs.go == '1'
+        run: |
+          python supply_top.py
+          python market_summary.py > /tmp/market_summary.json
+          mv /tmp/market_summary.json market_summary.json
+
+      - name: 오늘의 수급 — 카드
+        if: steps.supply_post.outputs.go == '1'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk fonts-noto-cjk-extra ffmpeg
+          python cards.py --supply
+
+      - name: 오늘의 수급 — 카드를 theme_bot 에
+        if: steps.supply_post.outputs.go == '1'
+        env:
+          CARD_REPO_TOKEN: ${{ secrets.CARD_REPO_TOKEN || secrets.CARDREPOTOKEN }}
+        run: |
+          if [ -z "$CARD_REPO_TOKEN" ]; then
+            echo "CARD_REPO_TOKEN 이 없어 카드를 올리지 않습니다."
+            exit 0
+          fi
+          day=$(echo "$THEME_DAY" | tr -d '-')
+          rm -rf /tmp/theme_bot_cards
+          git clone --depth 1 \
+            "https://x-access-token:${CARD_REPO_TOKEN}@github.com/wkdtlgurdk-boop/theme_bot.git" /tmp/theme_bot_cards
+          # supply/ 만 갈아 끼운다 -- 같은 날 폴더의 테마 카드는 테마 워크플로 몫이다.
+          rm -rf "/tmp/theme_bot_cards/cards/$day/supply"
+          mkdir -p "/tmp/theme_bot_cards/cards/$day"
+          cp -r "cards/$day/supply" "/tmp/theme_bot_cards/cards/$day/"
+          cd /tmp/theme_bot_cards
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A cards
+          git diff --cached --quiet && echo "no new supply cards" && exit 0
+          git commit -m "supply cards $day"
+          git pull --rebase origin main
+          git push origin HEAD:main
+
+      - name: 오늘의 수급 — 스레드
+        if: steps.supply_post.outputs.go == '1'
+        env:
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID || secrets.THREADUSERID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN || secrets.THREADACCESSTOKEN }}
+        run: python post_threads.py --supply
+
+      - name: 오늘의 수급 — 쇼츠
+        if: steps.supply_post.outputs.go == '1'
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python shorts.py --supply
+          python youtube_upload.py --supply

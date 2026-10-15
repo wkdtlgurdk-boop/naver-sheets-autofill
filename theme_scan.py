@@ -381,11 +381,10 @@ def apply_mode(mode):
             globals()[key] = value
 
 
-# 주도 테마가 없는 날 (10/15 사용자 지정). 완화 기준으로도 그룹이 0개면 테마를
-# 억지로 만들지 않는다. 테마는 '없음'으로 올리고(시트·피드·카드), 그날 외국인·기관이
-# 가장 많이 순매수한 종목 5개씩은 '오늘의 수급'으로 따로 올린다(scan_mode.json 의
-# supply — 테마 칸·테마 피드에는 넣지 않는다). 순매수 순위는 수급 시트
-# (supply_demand.py)가 쓰는 같은 네이버 API 에서 코스피·코스닥을 합쳐 금액순으로
+# 오늘의 수급 (10/15 사용자 지정). 그날 외국인·기관이 가장 많이 순매수한 종목 5개씩을
+# 테마와 따로 매일 올린다(supply_post.py, supply-demand 워크플로). 주도 테마가 없는
+# 날에도 테마 칸에는 넣지 않는다 — 순매수 상위는 테마가 아니다. 순매수 순위는 수급
+# 시트(supply_demand.py)가 쓰는 같은 네이버 API 에서 코스피·코스닥을 합쳐 금액순으로
 # 뽑고, ETF·ETN 은 뺀다.
 NO_THEME_TOP = 5
 INVESTOR_SLOTS = (("FOREIGNER", "외국인 순매수"), ("ORGANIZATION", "기관 순매수"))
@@ -393,11 +392,6 @@ INVESTOR_SLOTS = (("FOREIGNER", "외국인 순매수"), ("ORGANIZATION", "기관
 
 def no_theme_mode(out_dir) -> bool:
     return bool(load_mode(out_dir).get("no_theme"))
-
-
-def supply_groups(out_dir) -> list:
-    """테마 없는 날의 '오늘의 수급' 칸 (외국인·기관 순매수 상위)."""
-    return load_mode(out_dir).get("supply") or []
 
 
 def investor_groups(day, fetch=None, quote=None):
@@ -962,7 +956,7 @@ def main():
         apply_mode(mode)
         raw, final = derive(raw)
         if mode.get("no_theme"):
-            # 테마가 없던 날은 다시 묶어도 테마가 0개다. 순매수 칸은 mode["supply"] 에 따로 있다.
+            # 테마가 없던 날은 다시 묶어도 테마가 0개다.
             final = []
     else:
         memoize_fetches()
@@ -977,9 +971,9 @@ def main():
         if not final:
             kst = timezone(timedelta(hours=9))
             day = (os.environ.get("THEME_DAY") or datetime.now(kst).strftime("%Y-%m-%d")).replace("-", "")
-            print("[테마 없음] 완화 기준으로도 그룹이 0개 — '오늘의 테마 없음'과 "
-                  "외국인·기관 순매수 상위를 따로 올립니다", file=sys.stderr)
-            mode = dict(mode, no_theme=True, supply=investor_groups(day))
+            print(f"[테마 없음] {day} 완화 기준으로도 그룹이 0개 — '오늘의 테마 없음'으로 "
+                  "올립니다 (수급은 supply-demand 워크플로가 매일 따로 올린다)", file=sys.stderr)
+            mode = dict(mode, no_theme=True)
         (out_dir / MODE_FILE).write_text(json.dumps(mode, ensure_ascii=False), encoding="utf-8")
         with open(out_dir / "raw_scan.json", "w", encoding="utf-8") as f:
             json.dump(raw, f, ensure_ascii=False, indent=2)

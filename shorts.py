@@ -96,7 +96,8 @@ def faded(im: Image.Image, a: float) -> Image.Image:
 
 
 class Shorts:
-    def __init__(self, paths: list[Path], date_label: str):
+    def __init__(self, paths: list[Path], date_label: str, supply: bool = False):
+        self.supply = supply     # '오늘의 수급' 영상 (supply-demand 워크플로, 매일)
         self.cover = Image.open(paths[0]).convert("RGBA")
         self.themes = [Image.open(p).convert("RGBA") for p in paths[1:]]
         self.tl = Timeline(len(self.themes))
@@ -115,8 +116,7 @@ class Shorts:
         d.text((cards.M, 118), f"{date_label} · 장 마감", font=cards.font("medium", 34),
                fill=MUTED, anchor="lm")
         f = cards.font("black", 76)
-        # 주도 테마가 없는 날은 '오늘의 수급' 카드(외국인·기관 순매수)로 영상을 만든다.
-        head = "오늘의 수급 " if cards.no_theme_day() else "오늘의 테마 "
+        head = "오늘의 수급 " if self.supply else "오늘의 테마 "
         d.text((cards.M, 232), head, font=f, fill=INK, anchor="ls")
         d.text((cards.M + d.textlength(head, font=f), 232), f"TOP {n}", font=f,
                fill=GOLD, anchor="ls")
@@ -134,7 +134,7 @@ class Shorts:
             if frac > 0:
                 d.rounded_rectangle([a, y, a + max(seg * frac, 8), y + 8], radius=4, fill=GOLD)
         f = cards.font("medium", 34)
-        foot = "순매수 금액 · 평균상승률" if cards.no_theme_day() else "거래대금 순 · 평균상승률"
+        foot = "순매수 금액순" if self.supply else "거래대금 순 · 평균상승률"
         d.text((x0, 1770), foot, font=f, fill=MUTED, anchor="lm")
         d.text((x1, 1770), "전체 순위" if k == 0 else f"{k} / {n}",
                font=cards.font("bold", 34), fill=INK, anchor="rm")
@@ -183,8 +183,9 @@ def ffmpeg_bin() -> str:
     return path
 
 
-def render(paths: list[Path], date_label: str, out: Path, debug_at: list[float] = ()) -> float:
-    s = Shorts(paths, date_label)
+def render(paths: list[Path], date_label: str, out: Path, debug_at: list[float] = (),
+           supply: bool = False) -> float:
+    s = Shorts(paths, date_label, supply)
     out.parent.mkdir(parents=True, exist_ok=True)
     # 유튜브가 권하는 형태: H.264 + yuv420p + faststart. 소리 없는 영상이라 음성 트랙은 없다.
     cmd = [ffmpeg_bin(), "-y", "-loglevel", "error",
@@ -204,21 +205,26 @@ def render(paths: list[Path], date_label: str, out: Path, debug_at: list[float] 
     return s.tl.total
 
 
+def video_name(day: str, supply: bool = False) -> str:
+    """테마 영상은 <날짜>.mp4, 수급 영상은 <날짜>_supply.mp4 (youtube_upload 가 같은 이름을 찾는다)."""
+    return f"{day}_supply.mp4" if supply else f"{day}.mp4"
+
+
 def main() -> int:
     here = Path(__file__).parent
-    card_root = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
+    supply = "--supply" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--supply"]
+    card_root = Path(args[0]) if args else here / "cards"
     now, _ = as_of()
     day = f"{now:%Y%m%d}"
-    folder = card_root / day
-    if cards.no_theme_day():
-        folder = folder / cards.SUPPLY_DIR
+    folder = card_root / day / cards.SUPPLY_DIR if supply else card_root / day
     paths = sorted(folder.glob("*.png"))
     if len(paths) < 2:
         print(f"[shorts] {folder} 에 카드가 모자랍니다 ({len(paths)}장) — 영상을 만들지 않습니다.")
         return 0
-    out = Path(sys.argv[2]) if len(sys.argv) > 2 else here / "shorts" / f"{day}.mp4"
+    out = Path(args[1]) if len(args) > 1 else here / "shorts" / video_name(day, supply)
     debug = [float(x) for x in os.environ.get("SHORTS_DEBUG_FRAMES", "").split(",") if x.strip()]
-    total = render(paths, cards.header_date(now), out, debug)
+    total = render(paths, cards.header_date(now), out, debug, supply)
     print(f"[shorts] {out} ({len(paths) - 1}장, {total:.1f}초)")
     return 0
 

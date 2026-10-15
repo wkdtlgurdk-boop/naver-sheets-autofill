@@ -393,11 +393,13 @@ jobs:
           git clone --depth 1 \
             "https://x-access-token:${CARD_REPO_TOKEN}@github.com/wkdtlgurdk-boop/theme_bot.git" /tmp/theme_bot
           mkdir -p /tmp/theme_bot/cards /tmp/theme_bot/feed
-          # 그 날 폴더를 통째로 갈아 끼운다. cp 만 하면 지난 실행이 남긴
-          # 카드가 섞인다 -- 테마 이름이 파일명이라 그룹이 바뀌면 이름도
-          # 바뀌고, 없어진 테마의 카드가 그대로 남는다.
-          rm -rf "/tmp/theme_bot/cards/$day"
-          cp -r "cards/$day" /tmp/theme_bot/cards/
+          # 그 날 폴더의 테마 카드를 통째로 갈아 끼운다. cp 만 하면 지난 실행이
+          # 남긴 카드가 섞인다 -- 테마 이름이 파일명이라 그룹이 바뀌면 이름도
+          # 바뀌고, 없어진 테마의 카드가 그대로 남는다. 단 supply/ 아래
+          # '오늘의 수급' 카드는 수급 워크플로 몫이라 건드리지 않는다.
+          mkdir -p "/tmp/theme_bot/cards/$day"
+          find "/tmp/theme_bot/cards/$day" -maxdepth 1 -type f -delete
+          cp "cards/$day"/*.png "/tmp/theme_bot/cards/$day/"
           # 카드와 같은 클론에 시트 피드도 얹는다. 아침 매수 후보 봇은 구글
           # 인증이 없어 시트를 직접 못 읽으므로, 방금 쓴 시트 블록을 여기로
           # 내보내 raw.githubusercontent.com 으로 받아 가게 한다. 실패해도
