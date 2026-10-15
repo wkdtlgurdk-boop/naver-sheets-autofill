@@ -156,10 +156,12 @@ def test_title_spaces_the_middle_dot_but_the_list_does_not():
 
 def test_footer_is_built_from_the_scan_thresholds():
     """푸터의 조건 문구는 theme_scan 상수에서 만든다 — 문턱을 바꾸면 같이 바뀐다."""
-    text = cards.footer_text()
+    # 러너의 scan_mode.json(그날 실제 모드)에 끌려가지 않게 기본 모드로 본다
+    text = cards.footer_text({})
     check("시총 문턱", f"{ts.MIN_CAP:,}억" in text, True)
     check("급등 문턱", f"{ts.SURGE_RATE:g}%" in text, True)
     check("종목 수", f"{ts.MIN_COUNT}개" in text, True)
+    check("테마 없는 날 하단", "외국인·기관 순매수" in cards.footer_text({"no_theme": True}), True)
 
 
 def test_long_theme_list_is_truncated_not_overflowed():
