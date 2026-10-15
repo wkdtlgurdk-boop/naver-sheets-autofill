@@ -138,7 +138,9 @@ def caption(groups: list[dict], now: datetime) -> str:
     글머리에 '시황정리' 를 쓰는 이유: 캐러셀 첫 장이 지수·거래대금·외인
     요약이고 그 뒤가 테마별 카드라, 글 전체를 묶는 말로는 테마보다 넓다.
     """
-    lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "", "오늘의 테마"]
+    head = ("오늘은 주도 테마가 없었개 — 외인·기관 순매수 상위" if cards.no_theme_day()
+            else "오늘의 테마")
+    lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "", head]
     for i, g in enumerate(cards.ranked(groups), 1):
         lines.append(f"{i}. {g['keyword']} {cards.avg_rate(g['top5']):+.2f}%")
     lines += ["", "오늘도 수고했개 🐾"]

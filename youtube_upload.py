@@ -73,7 +73,13 @@ def date_mark(now: datetime) -> str:
     return f"{now:%Y.%m.%d}"
 
 
+def ts_top() -> int:
+    return cards.ts.NO_THEME_TOP
+
+
 def title(groups: list[dict], now: datetime) -> str:
+    if cards.no_theme_day():
+        return f"{date_mark(now)} 주도 테마 없는 날 · 외인·기관 순매수 TOP {ts_top()} #shorts"
     top = cards.ranked(groups)[0]["keyword"] if groups else ""
     t = f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} | 1위 {top} #shorts"
     return t if len(t) <= TITLE_LIMIT else f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} #shorts"

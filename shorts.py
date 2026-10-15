@@ -115,7 +115,7 @@ class Shorts:
         d.text((cards.M, 118), f"{date_label} · 장 마감", font=cards.font("medium", 34),
                fill=MUTED, anchor="lm")
         f = cards.font("black", 76)
-        head = "오늘의 테마 "
+        head = "외인·기관 순매수 " if cards.no_theme_day() else "오늘의 테마 "
         d.text((cards.M, 232), head, font=f, fill=INK, anchor="ls")
         d.text((cards.M + d.textlength(head, font=f), 232), f"TOP {n}", font=f,
                fill=GOLD, anchor="ls")
