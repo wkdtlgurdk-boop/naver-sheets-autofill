@@ -95,7 +95,8 @@ def call(path: str, params: dict) -> dict:
         raise RuntimeError(f"{e.code} {path}: {body}") from None
 
 
-def already_posted(user_id: str, token: str, now: datetime) -> str | None:
+def already_posted(user_id: str, token: str, now: datetime,
+                   kind: str = "시황정리") -> str | None:
     """오늘 글이 이미 올라가 있으면 그 글의 id. 없으면 None.
 
     본문 첫 줄이 '멍! 2026년 9월 18일 시황정리...' 라 날짜가 그대로 표식이
@@ -114,14 +115,16 @@ def already_posted(user_id: str, token: str, now: datetime) -> str | None:
     mark = caption_date(now)
     for post in doc.get("data") or []:
         first = (post.get("text") or "").split("\n", 1)[0]
-        if mark in first:
+        # 테마 없는 날은 하루에 글이 둘(시황정리·수급정리)이라 종류까지 본다.
+        if mark in first and kind in first:
             return post.get("id")
     return None
 
 
-def raw_url(path: Path, day: str) -> str:
+def raw_url(path: Path, day: str, sub: str = "") -> str:
+    rel = f"{sub}/{path.name}" if sub else path.name
     return (f"https://raw.githubusercontent.com/{CARD_REPO}/{CARD_BRANCH}"
-            f"/cards/{day}/{urllib.parse.quote(path.name)}")
+            f"/cards/{day}/{urllib.parse.quote(rel)}")
 
 
 def caption_date(now: datetime) -> str:
@@ -138,9 +141,7 @@ def caption(groups: list[dict], now: datetime) -> str:
     글머리에 '시황정리' 를 쓰는 이유: 캐러셀 첫 장이 지수·거래대금·외인
     요약이고 그 뒤가 테마별 카드라, 글 전체를 묶는 말로는 테마보다 넓다.
     """
-    head = ("오늘은 주도 테마가 없었개 — 외인·기관 순매수 상위" if cards.no_theme_day()
-            else "오늘의 테마")
-    lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "", head]
+    lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "", "오늘의 테마"]
     for i, g in enumerate(cards.ranked(groups), 1):
         lines.append(f"{i}. {g['keyword']} {cards.avg_rate(g['top5']):+.2f}%")
     lines += ["", "오늘도 수고했개 🐾"]
@@ -150,6 +151,56 @@ def caption(groups: list[dict], now: datetime) -> str:
         return text
     # 테마가 많은 날은 꼬리 문구부터 버린다. 순위가 잘리는 것보다 낫다.
     return "\n".join(lines[:-2])[:TEXT_LIMIT]
+
+
+def caption_no_theme(now: datetime) -> str:
+    """주도 테마가 없는 날의 시황정리. 순매수 상위는 바로 뒤 '수급정리' 글에 따로 있다."""
+    return "\n".join([f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "",
+                      "오늘의 테마: 없음",
+                      "조건을 채운 주도 테마가 한 곳도 없었개 (완화 기준까지 확인)",
+                      "", "외인·기관 순매수 상위는 수급정리 글에서 보개 🐾"])
+
+
+def caption_supply(supply: list[dict], now: datetime) -> str:
+    """'오늘의 수급' 글. 칸마다 순매수 금액 상위 종목을 적는다."""
+    lines = [f"멍! {caption_date(now)} 수급정리 물어왔개 🐕", ""]
+    for g in supply:
+        lines.append(g["keyword"])
+        for i, st in enumerate(g["top5"], 1):
+            net = st.get("net_buy", st.get("amount", 0))
+            lines.append(f"{i}. {st['name']} {cards.eok(net):+,}억 ({st['rate']:+.2f}%)")
+        lines.append("")
+    lines.append("오늘도 수고했개 🐾")
+    return "\n".join(lines)[:TEXT_LIMIT]
+
+
+def publish(user_id: str, token: str, urls: list[str], text: str) -> str:
+    """한 장이면 이미지 글, 여러 장이면 캐러셀. 게시된 글 id."""
+    if len(urls) == 1:
+        got = call(f"{user_id}/threads", {"media_type": "IMAGE", "image_url": urls[0],
+                                          "text": text, "access_token": token})
+        wait_ready(got["id"], token)
+        return call(f"{user_id}/threads_publish", {
+            "creation_id": got["id"], "access_token": token}).get("id")
+    children = []
+    for url in urls:
+        got = call(f"{user_id}/threads", {
+            "media_type": "IMAGE", "image_url": url,
+            "is_carousel_item": "true", "access_token": token})
+        children.append(got["id"])
+        print(f"  올림 {url.rsplit('/', 1)[-1]} -> {got['id']}", file=sys.stderr)
+    # 묶기 전에 전부 익기를 기다린다. 여기를 건너뛰면 마지막 장이 아직
+    # IN_PROGRESS 라 캐러셀이 통째로 거부된다.
+    for cid in children:
+        wait_ready(cid, token)
+    print(f"  {len(children)}장 준비 완료", file=sys.stderr)
+    parent = call(f"{user_id}/threads", {
+        "media_type": "CAROUSEL", "children": ",".join(children),
+        "text": text, "access_token": token})
+    # 캐러셀 컨테이너 자체도 잠깐 자리를 잡는다.
+    time.sleep(SETTLE_SECONDS)
+    return call(f"{user_id}/threads_publish", {
+        "creation_id": parent["id"], "access_token": token}).get("id")
 
 
 def main() -> int:
@@ -170,64 +221,48 @@ def main() -> int:
         return 0
     if overridden:
         print(f"[threads] THEME_AS_OF={now:%Y-%m-%d} 기준으로 올립니다.", file=sys.stderr)
-    # 같은 날 두 번 올리지 않는다. 시계가 둘이기 때문이다 -- Apps Script 가
-    # 20:10 에 띄우고, 그게 안 뜬 날을 위해 GitHub cron 이 21:10 에 한 번 더
-    # 돈다. 둘 다 뜬 날에는 뒤엣것이 여기서 멈춘다.
-    posted_id = already_posted(user_id, token, now)
-    if posted_id and os.environ.get("THREADS_ALLOW_BACKFILL") == "1":
-        # 사람이 repost 로 부른 실행이다. 그 입력은 설명부터 "같은 날 글이 둘이
-        # 될 수 있음" 이라고 말하고 있으므로, 여기서 막으면 그 입력이 하는 일이
-        # 없어진다. 9/22 를 중복 카드 없이 다시 올리려던 실행이 이 줄에서 1초
-        # 만에 멈췄다 -- 리포의 카드만 갈아 끼우고 스레드 글은 옛것 그대로였다.
-        # 메타는 게시 때 이미지를 받아다 자기 쪽에 두므로, 리포를 고쳐도 이미
-        # 올라간 글은 바뀌지 않는다. 다시 올리는 것이 유일한 방법이다.
-        print(f"[threads] {caption_date(now)} 글이 이미 있지만({posted_id}) "
-              "다시 올립니다 — 같은 날 글이 둘이 됩니다.", file=sys.stderr)
-    elif posted_id:
-        return give_up(f"{caption_date(now)} 글이 이미 올라가 있습니다 ({posted_id})")
-
     day = f"{now:%Y%m%d}"
     card_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
-    paths = sorted((card_dir / day).glob("*.png"))
-    if not paths:
-        return give_up(f"{card_dir / day} 에 카드가 없습니다")
-    if len(paths) > MAX_ITEMS:
-        print(f"[threads] 카드 {len(paths)}장 중 앞 {MAX_ITEMS}장만 올립니다.",
-              file=sys.stderr)
-        paths = paths[:MAX_ITEMS]
-
     groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
+    if not groups and cards.no_theme_day():
+        # 주도 테마가 없는 날은 글을 둘로 나눈다 (10/15 사용자 지정):
+        # '오늘의 테마 없음' 한 장, 그리고 외국인·기관 순매수 상위를 '수급정리'로.
+        supply = cards.ts.supply_groups(here)
+        posts = [("시황정리", [card_dir / day / "01_monthly.png"], "", caption_no_theme(now)),
+                 ("수급정리", sorted((card_dir / day / cards.SUPPLY_DIR).glob("*.png")),
+                  cards.SUPPLY_DIR, caption_supply(supply, now))]
+    else:
+        posts = [("시황정리", sorted((card_dir / day).glob("*.png")), "", caption(groups, now))]
 
-    try:
-        children = []
-        for p in paths:
-            url = raw_url(p, day)
-            got = call(f"{user_id}/threads", {
-                "media_type": "IMAGE", "image_url": url,
-                "is_carousel_item": "true", "access_token": token})
-            children.append(got["id"])
-            print(f"  올림 {p.name} -> {got['id']}", file=sys.stderr)
-
-        # 묶기 전에 전부 익기를 기다린다. 여기를 건너뛰면 마지막 장이 아직
-        # IN_PROGRESS 라 캐러셀이 통째로 거부된다.
-        for cid in children:
-            wait_ready(cid, token)
-        print(f"  {len(children)}장 준비 완료", file=sys.stderr)
-
-        text = caption(groups, now)
-        parent = call(f"{user_id}/threads", {
-            "media_type": "CAROUSEL", "children": ",".join(children),
-            "text": text, "access_token": token})
-
-        # 캐러셀 컨테이너 자체도 잠깐 자리를 잡는다.
-        time.sleep(SETTLE_SECONDS)
-        posted = call(f"{user_id}/threads_publish", {
-            "creation_id": parent["id"], "access_token": token})
-    except (RuntimeError, KeyError, urllib.error.URLError) as exc:
-        return give_up(f"{type(exc).__name__}: {exc}")
-
-    print(f"[threads] 게시 완료 — {posted.get('id')} (카드 {len(children)}장)",
-          file=sys.stderr)
+    for kind, paths, sub, text in posts:
+        # 같은 날 두 번 올리지 않는다. 시계가 둘이기 때문이다 -- Apps Script 가
+        # 20:10 에 띄우고, 그게 안 뜬 날을 위해 GitHub cron 이 21:10 에 한 번 더
+        # 돈다. 둘 다 뜬 날에는 뒤엣것이 여기서 멈춘다.
+        posted_id = already_posted(user_id, token, now, kind)
+        if posted_id and os.environ.get("THREADS_ALLOW_BACKFILL") == "1":
+            # 사람이 repost 로 부른 실행이다. 그 입력은 설명부터 "같은 날 글이 둘이
+            # 될 수 있음" 이라고 말하고 있으므로, 여기서 막으면 그 입력이 하는 일이
+            # 없어진다. 메타는 게시 때 이미지를 받아다 자기 쪽에 두므로, 리포를
+            # 고쳐도 이미 올라간 글은 바뀌지 않는다. 다시 올리는 것이 유일한 방법이다.
+            print(f"[threads] {caption_date(now)} {kind} 글이 이미 있지만({posted_id}) "
+                  "다시 올립니다 — 같은 날 글이 둘이 됩니다.", file=sys.stderr)
+        elif posted_id:
+            give_up(f"{caption_date(now)} {kind} 글이 이미 올라가 있습니다 ({posted_id})")
+            continue
+        paths = [p for p in paths if p.exists()]
+        if not paths:
+            give_up(f"{kind}: 카드가 없습니다 ({card_dir / day / sub})")
+            continue
+        if len(paths) > MAX_ITEMS:
+            print(f"[threads] 카드 {len(paths)}장 중 앞 {MAX_ITEMS}장만 올립니다.",
+                  file=sys.stderr)
+            paths = paths[:MAX_ITEMS]
+        try:
+            pid = publish(user_id, token, [raw_url(p, day, sub) for p in paths], text)
+        except (RuntimeError, KeyError, urllib.error.URLError) as exc:
+            give_up(f"{kind} {type(exc).__name__}: {exc}")
+            continue
+        print(f"[threads] {kind} 게시 완료 — {pid} (카드 {len(paths)}장)", file=sys.stderr)
     return 0
 
 

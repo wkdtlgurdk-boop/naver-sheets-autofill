@@ -349,6 +349,41 @@ def write_daily(book: Spreadsheet, gid: int, groups: list[dict],
     return read_daily_totals(book, gid, header_row, slots)
 
 
+NO_THEME = "주도 테마 없음"
+# 테마 없는 날에 이 파이프라인이 쓴 적 있는 칸 이름. 10/15 첫 실행은 순매수 상위를
+# 테마 칸에 넣었다 — 다시 반영할 때 그 칸을 지운다. 남의 키워드는 건드리지 않는다.
+NO_THEME_LABELS = (NO_THEME, "외국인 순매수", "기관 순매수")
+
+
+def write_daily_no_theme(book: Spreadsheet, gid: int, now: datetime) -> None:
+    """테마 없는 날: 이 파이프라인이 쓴 칸을 비우고 첫 빈 슬롯에 '주도 테마 없음'만 적는다.
+
+    종목은 적지 않는다 — 순매수 상위는 테마가 아니다(수급 시트에 따로 있다).
+    groups_from_sheet·feed_export 는 종목 없는 칸을 건너뛰므로 테마로 읽히지 않는다.
+    """
+    header_row = ensure_daily_date(book, gid, now)
+    header = book.read_formatted(gid, f"A{header_row}:Z{header_row}")
+    header = header[0] if header else []
+    slots = [i for i, v in enumerate(header) if str(v).strip() == "종목명"]
+    if not slots:
+        raise SystemExit(f"[중단] {header_row}행이 헤더행이 아닙니다 ('종목명' 없음).")
+    kw_row = book.read_formatted(gid, f"A{header_row + 1}:Z{header_row + 1}")
+    kw_row = kw_row[0] if kw_row else []
+    keyword_at = lambda s: str(kw_row[s]).strip() if s < len(kw_row) else ""
+    ours = [s for s in slots if keyword_at(s) in NO_THEME_LABELS]
+    others = [s for s in slots if keyword_at(s) and s not in ours]
+    if ours:
+        clear_daily_slots(book, gid, header_row, ours)
+    if others:
+        print(f"  Daily: 다른 키워드가 든 슬롯 {len(others)}개는 그대로 둡니다 — "
+              f"{', '.join(keyword_at(s) for s in others)}")
+    free = [s for s in slots if s not in others]
+    if free:
+        c1 = col_letter(free[0])
+        book.write(gid, f"{c1}{header_row + 1}:{c1}{header_row + 1}", [[NO_THEME]])
+        print(f"  Daily: {c1}{header_row + 1} = '{NO_THEME}'")
+
+
 def read_daily_totals(book: Spreadsheet, gid: int, header_row: int,
                       slots: list[int]) -> list[dict]:
     """대표행이 계산한 평균상승률/거래대금합을 시트에서 그대로 읽어온다.
@@ -452,7 +487,7 @@ def locate_monthly_block(book: Spreadsheet, gid: int, c1: str,
 
 
 def write_monthly(book: Spreadsheet, gid: int, totals: list[dict], market: dict,
-                  now: datetime) -> None:
+                  now: datetime, no_theme: bool = False) -> None:
     c1, c2, c3 = MONTHLY_COLS[now.weekday()]
     day_row, capacity = locate_monthly_block(book, gid, c1, now)
     print(f"  Monthly: {c1}{day_row}='{now.day}' ({c1}/{c2}/{c3} 열), "
@@ -476,6 +511,10 @@ def write_monthly(book: Spreadsheet, gid: int, totals: list[dict], market: dict,
         dropped = [str(t["keyword"]) for t in totals[capacity:]]
         print(f"    월간 블록은 {capacity}행까지라 제외 — {', '.join(dropped)}")
     start = day_row + 4
+    if no_theme:
+        # 그 날 그룹행을 통째로 다시 쓴다 — 첫 줄 '주도 테마 없음', 나머지는 비운다.
+        # 10/15 첫 실행이 남긴 순매수 칸 같은 것이 아래에 남지 않게.
+        rows = [[NO_THEME, "", ""]] + [["", "", ""] for _ in range(capacity - 1)]
     book.write(gid, f"{c1}{start}:{c3}{start + len(rows) - 1}", rows)
     print(f"    키워드 {len(rows)}행 기록 ({c1}{start} 부터)")
 
@@ -495,19 +534,27 @@ def main() -> int:
     here = Path(__file__).parent
     groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
     market = json.loads((here / "market_summary.json").read_text(encoding="utf-8"))
-    if not groups:
+    mode = json.loads((here / "scan_mode.json").read_text(encoding="utf-8")) \
+        if (here / "scan_mode.json").exists() else {}
+    no_theme = bool(mode.get("no_theme")) and not groups
+    if not groups and not no_theme:
         raise SystemExit("[중단] 조건을 만족하는 테마 그룹이 0개입니다. 시트를 건드리지 않습니다.")
-    print(f"{now:%Y-%m-%d %H:%M} KST — 그룹 {len(groups)}개")
+    print(f"{now:%Y-%m-%d %H:%M} KST — "
+          + (f"'{NO_THEME}'" if no_theme else f"그룹 {len(groups)}개"))
 
     daily = Spreadsheet(DAILY_ID)
     daily_gid = resolve_daily_gid(daily, now)
     print(f"  Daily 탭: '{daily.title_for_gid(daily_gid)}' (gid {daily_gid})")
-    totals = write_daily(daily, daily_gid, groups, now, clear_first)
+    if no_theme:
+        write_daily_no_theme(daily, daily_gid, now)
+        totals = []
+    else:
+        totals = write_daily(daily, daily_gid, groups, now, clear_first)
 
     monthly = Spreadsheet(MONTHLY_ID)
     monthly_gid = resolve_monthly_gid(monthly, now)
     print(f"  Monthly 탭: '{monthly.title_for_gid(monthly_gid)}' (gid {monthly_gid})")
-    write_monthly(monthly, monthly_gid, totals, market, now)
+    write_monthly(monthly, monthly_gid, totals, market, now, no_theme)
 
     print("완료 — 두 시트 모두 기록됨")
     return 0

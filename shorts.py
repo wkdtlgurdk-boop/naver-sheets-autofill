@@ -115,7 +115,8 @@ class Shorts:
         d.text((cards.M, 118), f"{date_label} · 장 마감", font=cards.font("medium", 34),
                fill=MUTED, anchor="lm")
         f = cards.font("black", 76)
-        head = "외인·기관 순매수 " if cards.no_theme_day() else "오늘의 테마 "
+        # 주도 테마가 없는 날은 '오늘의 수급' 카드(외국인·기관 순매수)로 영상을 만든다.
+        head = "오늘의 수급 " if cards.no_theme_day() else "오늘의 테마 "
         d.text((cards.M, 232), head, font=f, fill=INK, anchor="ls")
         d.text((cards.M + d.textlength(head, font=f), 232), f"TOP {n}", font=f,
                fill=GOLD, anchor="ls")
@@ -133,7 +134,8 @@ class Shorts:
             if frac > 0:
                 d.rounded_rectangle([a, y, a + max(seg * frac, 8), y + 8], radius=4, fill=GOLD)
         f = cards.font("medium", 34)
-        d.text((x0, 1770), "거래대금 순 · 평균상승률", font=f, fill=MUTED, anchor="lm")
+        foot = "순매수 금액 · 평균상승률" if cards.no_theme_day() else "거래대금 순 · 평균상승률"
+        d.text((x0, 1770), foot, font=f, fill=MUTED, anchor="lm")
         d.text((x1, 1770), "전체 순위" if k == 0 else f"{k} / {n}",
                font=cards.font("bold", 34), fill=INK, anchor="rm")
 
@@ -207,14 +209,17 @@ def main() -> int:
     card_root = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
     now, _ = as_of()
     day = f"{now:%Y%m%d}"
-    paths = sorted((card_root / day).glob("*.png"))
+    folder = card_root / day
+    if cards.no_theme_day():
+        folder = folder / cards.SUPPLY_DIR
+    paths = sorted(folder.glob("*.png"))
     if len(paths) < 2:
-        print(f"[shorts] {card_root / day} 에 카드가 모자랍니다 ({len(paths)}장) — 영상을 만들지 않습니다.")
+        print(f"[shorts] {folder} 에 카드가 모자랍니다 ({len(paths)}장) — 영상을 만들지 않습니다.")
         return 0
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else here / "shorts" / f"{day}.mp4"
     debug = [float(x) for x in os.environ.get("SHORTS_DEBUG_FRAMES", "").split(",") if x.strip()]
     total = render(paths, cards.header_date(now), out, debug)
-    print(f"[shorts] {out} ({len(paths) - 1}개 테마, {total:.1f}초)")
+    print(f"[shorts] {out} ({len(paths) - 1}장, {total:.1f}초)")
     return 0
 
 

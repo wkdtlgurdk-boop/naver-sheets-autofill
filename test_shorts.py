@@ -68,10 +68,11 @@ def test_youtube_title_and_duplicate_mark():
     real = cards.no_theme_day
     cards.no_theme_day = lambda: True
     try:
-        t = yt.title(FIXTURE, now)
+        t = yt.title([], now)
     finally:
         cards.no_theme_day = real
-    check("테마 없는 날 제목", "외인·기관 순매수" in t and "#shorts" in t, True)
+    check("테마 없는 날 제목은 오늘의 수급", "오늘의 수급" in t and "오늘의 테마" not in t
+          and "#shorts" in t, True)
     cards.no_theme_day = lambda: False
     try:
         t = yt.title(FIXTURE, now)

@@ -432,6 +432,38 @@ def test_clear_first_lets_the_day_be_rewritten_from_scratch():
     check("첫 슬롯 범위", written[0][0], "B158:B163")
 
 
+def test_no_theme_day_replaces_investor_slots_with_one_note():
+    """테마 없는 날: 첫 실행이 테마 칸에 넣은 순매수 칸을 지우고 '주도 테마 없음'만 남긴다."""
+    book = make_daily()
+    book.put("B158", "외국인 순매수")
+    book.put("B159", "HD현대중공업")
+    book.put("E158", "기관 순매수")
+    book.put("E159", "삼성전자")
+    tw.write_daily_no_theme(book, FAKE_GID, FRIDAY)
+    check("첫 칸은 '주도 테마 없음'", book.values.get((1, 158)), tw.NO_THEME)
+    check("외국인 종목은 지움", book.values.get((1, 159)), "")
+    check("기관 칸은 비움", (book.values.get((4, 158)), book.values.get((4, 159))), ("", ""))
+    for rng, _ in book.writes:
+        if rng in ("C158:C158", "D158:D158"):
+            failures.append(f"대표행 수식 칸을 건드렸다: {rng}")
+
+
+def test_no_theme_day_keeps_another_keyword():
+    book = make_daily()
+    book.put("B158", "사람이 적은 키워드")
+    tw.write_daily_no_theme(book, FAKE_GID, FRIDAY)
+    check("남의 키워드는 그대로", book.values.get((1, 158)), "사람이 적은 키워드")
+    check("다음 빈 칸에 적는다", book.values.get((4, 158)), tw.NO_THEME)
+
+
+def test_monthly_no_theme_day_rewrites_the_group_rows():
+    book = make_monthly()
+    tw.write_monthly(book, FAKE_GID, [], MARKET, FRIDAY, no_theme=True)
+    rows = book.writes[-1][1]
+    check("첫 줄은 '주도 테마 없음'", rows[0], [tw.NO_THEME, "", ""])
+    check("나머지 줄은 비운다", all(r == ["", "", ""] for r in rows[1:]), True)
+
+
 def test_as_of_reads_the_env_and_falls_back_to_today():
     import os
     old = os.environ.get("THEME_AS_OF")

@@ -77,9 +77,14 @@ def ts_top() -> int:
     return cards.ts.NO_THEME_TOP
 
 
+def supply_day(groups: list[dict]) -> bool:
+    """주도 테마가 없는 날 — 쇼츠는 '오늘의 수급'(외국인·기관 순매수) 영상이다."""
+    return not groups and cards.no_theme_day()
+
+
 def title(groups: list[dict], now: datetime) -> str:
-    if cards.no_theme_day():
-        return f"{date_mark(now)} 주도 테마 없는 날 · 외인·기관 순매수 TOP {ts_top()} #shorts"
+    if supply_day(groups):
+        return f"{date_mark(now)} 오늘의 수급 · 외인·기관 순매수 TOP {ts_top()} #shorts"
     top = cards.ranked(groups)[0]["keyword"] if groups else ""
     t = f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} | 1위 {top} #shorts"
     return t if len(t) <= TITLE_LIMIT else f"{date_mark(now)} 오늘의 테마 TOP {len(groups)} #shorts"
@@ -95,6 +100,18 @@ def tags(groups: list[dict]) -> list[str]:
         if len(out) >= len(BASE_TAGS) + TOP_THEMES:
             break
     return out
+
+
+def supply_description(supply: list[dict], now: datetime) -> str:
+    lines = [f"{now.year}년 {now.month}월 {now.day}일 장 마감 수급 정리 — 오늘은 주도 테마가 없었습니다", ""]
+    for g in supply:
+        lines.append(g["keyword"])
+        for i, s in enumerate(g["top5"], 1):
+            lines.append(f"{i}. {s['name']} {cards.eok(s.get('net_buy', 0)):+,}억 ({s['rate']:+.2f}%)")
+        lines.append("")
+    lines += [cards.SUPPLY_FOOTER, "투자 권유가 아닌 시세 정리입니다.", "",
+              "#shorts #오늘의수급 #외국인순매수 #기관순매수"]
+    return "\n".join(lines)[:DESC_LIMIT]
 
 
 def description(groups: list[dict], now: datetime) -> str:
@@ -168,8 +185,13 @@ def main() -> int:
         done = already_uploaded(token, now)
         if done and not backfill_ok:
             return give_up(f"{date_mark(now)} 영상이 이미 올라가 있습니다 (https://youtu.be/{done})")
-        meta = {"snippet": {"title": title(groups, now), "description": description(groups, now),
-                            "tags": tags(groups),
+        if supply_day(groups):
+            supply = cards.ts.supply_groups(here)
+            desc, tag = supply_description(supply, now), tags(supply)
+        else:
+            desc, tag = description(groups, now), tags(groups)
+        meta = {"snippet": {"title": title(groups, now), "description": desc,
+                            "tags": tag,
                             "categoryId": CATEGORY, "defaultLanguage": "ko"},
                 "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
         got = upload(token, video, meta)
