@@ -148,6 +148,22 @@ def test_cards_are_ordered_by_trading_value():
           ["01_monthly.png", "02_원전전력설비.png", "03_바이오.png"])
 
 
+def test_no_theme_day_makes_a_theme_card_and_separate_supply_cards():
+    """주도 테마가 없는 날: '오늘의 테마 없음' 한 장 + supply/ 아래 '오늘의 수급' 카드."""
+    supply = [{"keyword": k, "source_themes": [f"{k} 상위"], "total_qualifying": 2,
+               "top5": [{"name": "가", "code": "000001", "rate": -1.5, "amount": 900000,
+                         "net_buy": 120000},
+                        {"name": "나", "code": "000002", "rate": 2.0, "amount": 500000,
+                         "net_buy": 80000}]}
+              for k in ("외국인 순매수", "기관 순매수")]
+    with tempfile.TemporaryDirectory() as tmp:
+        made = cards.build_no_theme(Path(tmp), supply, MARKET, datetime(2026, 10, 15, 21, 0))
+        rel = [str(p.relative_to(Path(tmp) / "20261015")) for p in made]
+    check("파일 자리", rel, ["01_monthly.png", "supply/01_summary.png",
+                             "supply/02_외국인순매수.png", "supply/03_기관순매수.png"])
+    check("수급 카드 금액은 순매수", cards.supply_view(supply[0])["top5"][0]["amount"], 120000)
+
+
 def test_title_spaces_the_middle_dot_but_the_list_does_not():
     """제목만 가운뎃점 양옆을 띄운다 — 원본 카드가 그렇게 쓴다."""
     check("제목", cards.spaced("원전·전력설비"), "원전 · 전력설비")

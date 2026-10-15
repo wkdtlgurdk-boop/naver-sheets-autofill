@@ -340,6 +340,9 @@ jobs:
             python groups_from_sheet.py
           elif [ "$n" -gt 0 ]; then
             echo "스캔이 $n 개를 찾았습니다 — 시트를 읽지 않습니다."
+          elif python -c 'import sys,theme_scan as t;sys.exit(0 if t.no_theme_mode(".") else 1)'; then
+            # 주도 테마가 없는 날. 0개가 맞는 답이다 -- 시트에서 되살리면 안 된다.
+            echo "주도 테마 없는 날 — 시트를 읽지 않습니다 ('오늘의 테마 없음' + '오늘의 수급')."
           else
             echo "스캔이 0개입니다 — Daily 시트에서 해당 날짜 블록을 읽습니다."
             python groups_from_sheet.py

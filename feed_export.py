@@ -407,6 +407,21 @@ def cmd_themes(args) -> int:
     if overridden:
         print(f"THEME_AS_OF={now:%Y-%m-%d} — {label} 블록을 내보냅니다")
 
+    mode = read_json("scan_mode.json", {}) or {}
+    if mode.get("no_theme") and not (read_json("final_groups.json", []) or []):
+        # 주도 테마가 없는 날. 이때는 빈 피드가 맞는 말이다 -- 봇은 '오늘 테마가
+        # 하나도 없었다'로 읽는다. 순매수 상위(수급)는 테마가 아니므로 넣지 않는다.
+        payload = themes_feed([], {}, day, label,
+                              datetime.now(KST).isoformat(timespec="seconds"))
+        payload["no_theme"] = True
+        print(f"{label} 주도 테마 없음 — 빈 테마 피드를 내보냅니다")
+        if args.dry_run:
+            print("dry-run — 파일을 쓰지 않았습니다")
+            return 0
+        for path in write_feed(Path(args.feed_dir), "themes", payload):
+            print(f"  기록 {path}")
+        return 0
+
     book = Spreadsheet(DAILY_ID)
     grid = book.read_formatted(resolve_daily_gid(book, now), f"A1:AN{SEARCH_ROWS}")
     groups = groups_from_grid(grid, label)

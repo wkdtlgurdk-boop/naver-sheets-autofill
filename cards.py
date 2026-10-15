@@ -81,8 +81,13 @@ def header_date(now: datetime) -> str:
 
 
 def no_theme_day() -> bool:
-    """오늘 칸이 테마가 아니라 외국인·기관 순매수 상위인가 (scan_mode.json)."""
-    return bool(ts.load_mode(Path(__file__).parent).get("no_theme"))
+    """주도 테마가 없는 날인가 (scan_mode.json). 그날은 '오늘의 테마 없음' 카드와
+    '오늘의 수급'(외국인·기관 순매수 상위) 카드를 따로 만든다."""
+    return ts.no_theme_mode(Path(__file__).parent)
+
+
+SUPPLY_DIR = "supply"    # 그 날 카드 폴더 아래 '오늘의 수급' 카드 자리
+SUPPLY_FOOTER = "외국인·기관 순매수 상위 5종목 · 코스피·코스닥 합산, 순매수 금액순, ETF 제외"
 
 
 def footer_text(mode: dict | None = None) -> str:
@@ -91,8 +96,7 @@ def footer_text(mode: dict | None = None) -> str:
     mode 를 주면 scan_mode.json 대신 그것을 쓴다 (시험용)."""
     if mode is None:
         mode = ts.load_mode(Path(__file__).parent)
-    if mode.get("no_theme"):
-        return "주도 테마 없는 날 · 외국인·기관 순매수 상위 5종목 (코스피·코스닥 합산, 순매수 금액순, ETF 제외)"
+    # 테마 없는 날에도 테마 카드 하단은 '이 조건을 채운 테마가 없었다'는 뜻으로 같은 문턱을 적는다.
     ts.apply_mode(mode)
     prefix = "완화 기준 · " if mode.get("relaxed") else ""
     return (f"{prefix}시가총액 {ts.MIN_CAP:,}억↑·상승률 {ts.MIN_RATE:g}%↑ "
@@ -115,11 +119,11 @@ def spaced(keyword: str) -> str:
 
 
 class Card:
-    def __init__(self, now: datetime, badge: str):
+    def __init__(self, now: datetime, badge: str, footer: str | None = None):
         self.im = Image.new("RGB", (W, H), BG)
         self.d = ImageDraw.Draw(self.im)
         self._header(now, badge)
-        self._footer()
+        self._footer(footer)
 
     # --- 조각들 -------------------------------------------------------
     def _header(self, now: datetime, badge: str):
@@ -132,9 +136,9 @@ class Card:
         self.d.text(((x0 + x1) / 2, 98), badge, font=f, fill=BG, anchor="mm")
         self.d.rectangle([M, 147, R, 148], fill=RULE_H)
 
-    def _footer(self):
+    def _footer(self, text: str | None = None):
         self.d.rectangle([M, 1236, R, 1237], fill=RULE_S)
-        self.d.text((M, 1275), footer_text(), font=font("regular", SZ["footer"]),
+        self.d.text((M, 1275), text or footer_text(), font=font("regular", SZ["footer"]),
                     fill=DIM, anchor="lm")
 
     def title(self, text: str, sub: str):
@@ -153,18 +157,21 @@ class Card:
         return path
 
 
-def theme_card(now: datetime, group: dict, rank: int, total: int) -> Card:
-    """테마 한 장. rank 는 거래대금 순위(배지의 '1 / 7')."""
-    c = Card(now, f"{rank} / {total}")
+def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | None = None,
+               amount_label: str = "거래대금", box_label: str = "묶은 테마",
+               footer: str | None = None) -> Card:
+    """테마 한 장. rank 는 거래대금 순위(배지의 '1 / 7').
+    '오늘의 수급' 카드도 이 판을 쓴다 — 금액 칸이 거래대금 대신 순매수다."""
+    c = Card(now, f"{rank} / {total}", footer)
     top = group["top5"]
     c.title(spaced(group["keyword"]),
-            f"조건 충족 {group['total_qualifying']}종목 중 상위 {len(top)}개")
+            sub or f"조건 충족 {group['total_qualifying']}종목 중 상위 {len(top)}개")
 
     # 요약 두 칸: 평균상승률 / 거래대금
     c.d.text((M, 398), "평균상승률", font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
     c.d.text((M, 455), f"{avg_rate(top):+.2f}%", font=font("black", SZ["stat_value"]),
              fill=RED, anchor="ls")
-    c.d.text((378, 398), "거래대금", font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
+    c.d.text((378, 398), amount_label, font=font("medium", SZ["stat_label"]), fill=MUTED, anchor="ls")
     c.d.text((378, 455), f"{sum(eok(s['amount']) for s in top):,}억",
              font=font("black", SZ["stat_value"]), fill=INK, anchor="ls")
     c.d.rectangle([M, 515, R, 516], fill=RULE_S)
@@ -184,7 +191,7 @@ def theme_card(now: datetime, group: dict, rank: int, total: int) -> Card:
 
     # 묶은 테마 — 이 그룹이 네이버의 어느 테마들을 합친 것인지 밝힌다.
     c.d.rounded_rectangle([M, 1057, R, 1160], radius=14, fill=PANEL)
-    c.d.text((M + 25, 1098), "묶은 테마", font=font("medium", SZ["box_label"]),
+    c.d.text((M + 25, 1098), box_label, font=font("medium", SZ["box_label"]),
              fill=MUTED, anchor="ls")
     c.d.text((M + 25, 1135), fit(c.d, " · ".join(group["source_themes"]),
                                  font("medium", SZ["box_body"]), R - M - 50),
@@ -192,9 +199,11 @@ def theme_card(now: datetime, group: dict, rank: int, total: int) -> Card:
     return c
 
 
-def summary_card(now: datetime, groups: list[dict], market: dict) -> Card:
-    c = Card(now, "MONTHLY")
-    c.title("오늘의 테마", f"조건 충족 테마 {len(groups)}개 · 거래대금 순")
+def summary_card(now: datetime, groups: list[dict], market: dict, *,
+                 title: str = "오늘의 테마", sub: str | None = None,
+                 footer: str | None = None) -> Card:
+    c = Card(now, "MONTHLY", footer)
+    c.title(title, sub or f"조건 충족 테마 {len(groups)}개 · 거래대금 순")
 
     for x, key, label in ((M, "KOSPI", "KOSPI"), (564, "KOSDAQ", "KOSDAQ")):
         m = market[key]
@@ -232,6 +241,46 @@ def summary_card(now: datetime, groups: list[dict], market: dict) -> Card:
             c.row_rule(y + 23)
         y += 72
     return c
+
+
+def no_theme_card(now: datetime, market: dict) -> Card:
+    """주도 테마가 없는 날의 '오늘의 테마' 한 장. 지수 칸은 평소와 같고 순위표 자리에 '없음'."""
+    c = summary_card(now, [], market, sub="조건 충족 테마 0개 · 완화 기준까지 확인")
+    c.d.text((W // 2, 800), "오늘은 주도 테마가 없습니다", font=font("black", 60),
+             fill=INK, anchor="mm")
+    c.d.text((W // 2, 880), "조건을 채운 테마가 한 곳도 나오지 않았습니다",
+             font=font("medium", SZ["box_body"]), fill=MUTED, anchor="mm")
+    c.d.text((W // 2, 940), "외국인·기관 순매수 상위는 '오늘의 수급'에서",
+             font=font("medium", SZ["box_body"]), fill=GOLD, anchor="mm")
+    return c
+
+
+def supply_view(group: dict) -> dict:
+    """순매수 칸을 카드 판에 맞춘다: 종목 금액 칸에 거래대금 대신 순매수(백만원)를 넣는다."""
+    top = [dict(s, amount=s.get("net_buy", s.get("amount", 0))) for s in group["top5"]]
+    return dict(group, top5=top)
+
+
+def build_no_theme(out_dir: Path, supply: list[dict], market: dict, now: datetime) -> list[Path]:
+    """테마 없는 날: <날짜>/01_monthly.png 한 장(오늘의 테마 없음)과
+    <날짜>/supply/ 아래 '오늘의 수급' 요약 + 외국인·기관 카드. 스레드엔 두 글로 나눠 올린다."""
+    day = out_dir / f"{now:%Y%m%d}"
+    made = [no_theme_card(now, market).save(day / "01_monthly.png")]
+    groups = [supply_view(g) for g in supply]
+    if not groups:
+        return made
+    made.append(summary_card(now, groups, market, title="오늘의 수급",
+                             sub=f"외국인·기관 순매수 상위 {ts.NO_THEME_TOP}종목 · 순매수 금액",
+                             footer=SUPPLY_FOOTER)
+                .save(day / SUPPLY_DIR / "01_summary.png"))
+    for i, g in enumerate(groups, 1):
+        safe = "".join(ch for ch in g["keyword"] if ch.isalnum())
+        made.append(theme_card(now, g, i, len(groups),
+                               sub=f"코스피·코스닥 순매수 금액 상위 {len(g['top5'])}종목",
+                               amount_label="순매수", box_label="기준",
+                               footer=SUPPLY_FOOTER)
+                    .save(day / SUPPLY_DIR / f"{i + 1:02d}_{safe}.png"))
+    return made
 
 
 NAME_GAP = 28        # 요약 카드에서 테마 이름과 상승률 사이 최소 간격
@@ -292,7 +341,8 @@ def main() -> int:
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else here / "cards"
     groups = load(here / "final_groups.json")
     market = load(here / "market_summary.json")
-    if not groups:
+    no_theme = not groups and no_theme_day()
+    if not groups and not no_theme:
         raise SystemExit("[중단] 그룹이 0개입니다. 카드를 만들지 않습니다.")
     if not market:
         raise SystemExit("[중단] 지수 요약이 비어 있습니다 — market_summary.py 가 "
@@ -304,7 +354,11 @@ def main() -> int:
     now, overridden = as_of()
     if overridden:
         print(f"[주의] THEME_AS_OF={now:%Y-%m-%d} — 이 날짜로 카드를 만듭니다.")
-    made = build(out_dir, groups, market, now)
+    if no_theme:
+        print("주도 테마 없음 — '오늘의 테마 없음' 카드와 '오늘의 수급' 카드를 따로 만듭니다")
+        made = build_no_theme(out_dir, ts.supply_groups(here), market, now)
+    else:
+        made = build(out_dir, groups, market, now)
     for p in made:
         print(f"  {p}")
     print(f"카드 {len(made)}장")
