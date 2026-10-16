@@ -39,6 +39,8 @@ SETTLE_SECONDS = int(os.environ.get("THREADS_SETTLE_SECONDS", "10"))
 READY_TRIES = 20          # 한 장당 최대 100초까지 기다린다
 READY_INTERVAL = 5
 MAX_ITEMS = 20        # 캐러셀 상한
+RETRIES = 3           # 메타 일시 오류(500, is_transient)일 때 다시 시도하는 횟수
+RETRY_WAIT = 30       # 초. 시도마다 30·60초 기다린다
 TEXT_LIMIT = 500      # 본문 글자수 상한
 
 
@@ -263,10 +265,27 @@ def publish_all(posts, user_id: str, token: str, now: datetime, card_dir: Path, 
             print(f"[threads] 카드 {len(paths)}장 중 앞 {MAX_ITEMS}장만 올립니다.",
                   file=sys.stderr)
             paths = paths[:MAX_ITEMS]
-        try:
-            pid = publish(user_id, token, [raw_url(p, day, sub) for p in paths], text)
-        except (RuntimeError, KeyError, urllib.error.URLError) as exc:
-            give_up(f"{kind} {type(exc).__name__}: {exc}")
+        # 메타가 가끔 500 'is_transient' 를 낸다(10/16 시황정리가 이것으로 빠졌다 -- 뒤 회차는
+        # 피드가 이미 있어 멈추므로 그날 글이 통째로 없었다). 몇 번 더 시도한다. 다시 하기
+        # 전에 글이 실제로 올라갔는지 보고, 올라갔으면 멈춘다 -- 같은 글이 둘이 되지 않게.
+        pid, last = None, None
+        for attempt in range(1, RETRIES + 1):
+            try:
+                pid = publish(user_id, token, [raw_url(p, day, sub) for p in paths], text)
+                break
+            except (RuntimeError, KeyError, urllib.error.URLError) as exc:
+                last = exc
+                print(f"[threads] {kind} {attempt}번째 시도 실패: {type(exc).__name__}: "
+                      f"{str(exc)[:200]}", file=sys.stderr)
+                if attempt == RETRIES:
+                    break
+                time.sleep(RETRY_WAIT * attempt)
+                pid = already_posted(user_id, token, now, kind)
+                if pid:
+                    print(f"[threads] {kind} 글이 실제로는 올라가 있었습니다 ({pid})", file=sys.stderr)
+                    break
+        if not pid:
+            give_up(f"{kind} {type(last).__name__}: {last}")
             continue
         print(f"[threads] {kind} 게시 완료 — {pid} (카드 {len(paths)}장)", file=sys.stderr)
     return 0
