@@ -65,12 +65,17 @@ SYSTEM = """\
   이유로 고르지 마세요 — 반도체 8개 테마를 묶은 그룹에 'LED'라는 이름이
   붙은 적이 있는데, 그룹의 내용을 오해하게 만듭니다.
 - 그룹은 8개 이하가 되도록 묶으세요. 그보다 많으면 시트에서 잘립니다.
-- 반도체 밸류체인은 한 흐름으로 봅니다. '반도체 장비'·'HBM'·'시스템반도체'·
-  '온디바이스 AI'·후공정(OSAT·패키징)이 같은 날 함께 올랐으면 한 그룹으로
-  묶으세요. 2026-09-29 에 반도체 하루가 장비·시스템반도체·기판·재료·유리기판
-  다섯 칸으로 쪼개져, 칸마다 3~4종목짜리로 얇아지고 HPSP(장비)가 시스템반도체
-  칸에 앉았습니다. 다만 '반도체 기판·PCB'와 '반도체 재료/부품'은 공급망이
-  달라 따로 둡니다.
+- 반도체는 사용자가 '반도체 장비'와 '반도체 소재·부품' 두 칸으로 나눴습니다
+  (2026-10-17). 둘 다 사용자가 종목을 직접 고른 테마이니 서로 합치지 말고
+  다른 테마와도 묶지 마세요. 'HBM'·'시스템반도체'·'CXL'·'온디바이스 AI'·
+  '소캠' 같은 나머지 반도체 테마는 한 그룹으로 묶되, 이름에 '장비'·'소재'를
+  넣지 마세요(예: '반도체(HBM·시스템반도체)'). '반도체 기판·PCB'는 따로 둡니다.
+- '전력저장장치(ESS)'가 든 그룹의 이름은 'ESS' 로 씁니다. 전력기기(변압기·
+  차단기)는 ESS 가 아닙니다 — 사용자가 '전력기기' 칸을 따로 만들었습니다.
+- 바이오·제약 테마(제약업체·바이오시밀러·면역항암제·비만치료제·치매·신약 등)는
+  하루에 몇 개가 뜨든 '바이오' 한 그룹으로 묶으세요. 10/16 에 '바이오'와
+  '제약·바이오 신약' 두 칸으로 갈라졌습니다. 바이오인식(생체인식)은 바이오가
+  아닙니다.
 - 'OLED·디스플레이'와 '폴더블폰'은 사용자가 종목을 직접 고른 테마입니다. 다른
   테마와 묶지 말고 각각 한 그룹으로 두세요(유리기판·반도체 기판·폰 부품과도
   합치지 않습니다). 키워드는 'OLED·디스플레이' 그대로 씁니다.
@@ -79,7 +84,7 @@ SYSTEM = """\
   묶지 말고 각각 한 그룹으로 두세요.
 - '로봇'도 사용자가 종목을 직접 고른 테마입니다. AI 소프트웨어·반도체·
   방산 테마와 합치지 말고 한 그룹으로 두세요. 키워드는 '로봇' 그대로 씁니다.
-- '방산', '수소·연료전지', '완성차', '자동차 부품', '자율주행', '반도체 소재·부품', '태양광·풍력', '진단키트', '화장품', '자산주'도 사용자가 종목을
+- '방산', '수소·연료전지', '완성차', '자동차 부품', '자율주행', '반도체 소재·부품', '반도체 장비', '2차전지 부품', '전력기기', '태양광·풍력', '진단키트', '화장품', '자산주', '금호 관련주'도 사용자가 종목을
   직접 고른 테마입니다. 서로 합치지 말고(완성차·자동차 부품·
   자율주행도 각각 따로), 다른 테마와도 묶지 말고 각각 한 그룹으로 두세요.
   키워드는 테마 이름 그대로 씁니다. 방산을 우주항공과 합치지 않습니다.
@@ -487,6 +492,45 @@ def record_exclusions(stale: list[dict], misfits: list[dict], today: str) -> int
     return added
 
 
+BIO_WORDS = ("바이오", "제약", "신약", "면역항암", "비만치료", "치매", "항암", "바이오시밀러")
+
+
+def _is_bio(text: str) -> bool:
+    return any(w in text for w in BIO_WORDS) and "인식" not in text
+
+
+def enforce_user_rules(groups: list[dict]) -> list[dict]:
+    """사용자가 정한 묶기 규칙을 모델 답 위에 한 번 더 건다(2026-10-17).
+
+    모델에게 말로 일러도 날마다 흔들린다 — 10/16 바이오가 두 칸으로, ESS 가
+    '전력저장장치'로, 반도체가 '밸류체인(HBM·장비·…)'으로 나왔다.
+      1. '전력저장장치(ESS)'가 든 그룹 이름은 'ESS'.
+      2. 바이오·제약 그룹은 하나로 합쳐 '바이오'.
+      3. 직접 테마가 아닌 반도체 그룹 이름에서 '장비'·'소재'를 뺀다 — 장비와
+         소재·부품은 직접 테마 칸('반도체 장비'·'반도체 소재·부품')이 맡는다.
+    """
+    custom = {t["name"] for t in ts.load_custom_themes()}
+    out, bio = [], None
+    for g in groups:
+        g = dict(g, source_themes=list(g["source_themes"]))
+        if any(t.startswith("전력저장장치") for t in g["source_themes"]):
+            g["keyword"] = "ESS"
+        elif g["keyword"] not in custom and (_is_bio(g["keyword"]) or
+                                             all(_is_bio(t) for t in g["source_themes"])):
+            if bio is None:
+                bio = dict(g, keyword="바이오")
+                out.append(bio)
+            else:
+                bio["source_themes"] += g["source_themes"]
+                bio["reason"] = "바이오·제약 테마는 한 칸으로 묶는다(사용자 지정 2026-10-17)."
+            continue
+        elif "반도체" in g["keyword"] and g["keyword"] not in custom and (
+                "장비" in g["keyword"] or "소재" in g["keyword"]):
+            g["keyword"] = "반도체(HBM·시스템반도체)"
+        out.append(g)
+    return out
+
+
 def main() -> int:
     unavailable = cli_available()
     if unavailable:
@@ -521,7 +565,7 @@ def main() -> int:
 
     try:
         answer = json.loads(strip_fence(text))
-        groups = validate(answer["groups"], known)
+        groups = enforce_user_rules(validate(answer["groups"], known))
         stale, misfits = validate_exclusions(
             answer.get("stale_themes") or [], answer.get("misfit_stocks") or [], raw)
     except (StopIteration, json.JSONDecodeError, KeyError, TypeError) as exc:
