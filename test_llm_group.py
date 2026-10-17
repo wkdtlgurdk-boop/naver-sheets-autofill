@@ -157,6 +157,21 @@ def test_nothing_is_preserved_without_keyword_rules():
     check("테마명 규칙은 지도가 필요 없음", [g["keyword"] for g in out], ["반도체"])
 
 
+def test_사용자_묶기_규칙():
+    g = lambda kw, *t: {"keyword": kw, "source_themes": list(t), "reason": "r"}
+    out = lg.enforce_user_rules([
+        g("전력기기·ESS", "전력저장장치(ESS)"),
+        g("바이오", "바이오시밀러(복제 바이오의약품)"),
+        g("제약·바이오 신약", "제약업체", "면역항암제"),
+        g("반도체 밸류체인(HBM·장비·시스템반도체)", "HBM(고대역폭메모리)", "시스템반도체"),
+        g("반도체 소재·부품", "반도체 소재·부품"),
+        g("생체인식", "바이오인식(생체인식)"),
+    ])
+    names = [x["keyword"] for x in out]
+    assert names == ["ESS", "바이오", "반도체(HBM·시스템반도체)", "반도체 소재·부품", "생체인식"], names
+    assert out[1]["source_themes"] == ["바이오시밀러(복제 바이오의약품)", "제약업체", "면역항암제"], out[1]
+
+
 def test_unknown_names_are_ignored():
     """오늘 스캔에 없는 이름은 패턴이 되지 못한다.
 
