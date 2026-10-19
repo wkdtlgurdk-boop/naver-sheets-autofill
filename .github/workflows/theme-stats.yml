@@ -23,6 +23,10 @@ on:
         description: "계산만 하고 theme_bot 에 올리지 않음"
         type: boolean
         default: false
+      dump_only:
+        description: "시트 전체를 analysis/sheet_days.json 으로 덤프해 이 브랜치에 커밋만 한다 (통계·업로드 생략)"
+        type: boolean
+        default: false
 
 concurrency:
   group: theme-stats
@@ -49,7 +53,32 @@ jobs:
       - name: Run logic tests
         run: python test_theme_stats.py && python test_theme_fit.py
 
+      # 테마 편입 후 N거래일 성적 분석(analysis/theme_horizon.py)이 읽을 원본.
+      - name: 시트 덤프
+        if: ${{ inputs.dump_only == true }}
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: |
+          mkdir -p analysis
+          python - <<'PY'
+          import json
+          from theme_stats import DAILY_ID, read_sheet
+          from sheets import Spreadsheet
+          days = read_sheet(Spreadsheet(DAILY_ID))
+          out = {d.isoformat(): g for d, g in sorted(days.items())}
+          json.dump(out, open("analysis/sheet_days.json", "w", encoding="utf-8"),
+                    ensure_ascii=False, indent=0)
+          print(len(out), "days", min(out), "~", max(out))
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add analysis/sheet_days.json
+          git diff --cached --quiet && echo "no change" && exit 0
+          git commit -m "Dump Daily sheet for theme horizon analysis"
+          git push origin HEAD:${{ github.ref_name }}
+
       - name: 통계 계산
+        if: ${{ inputs.dump_only != true }}
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
         run: |
@@ -57,7 +86,7 @@ jobs:
           cat stats_out/report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: 오배정 기록을 커밋한다
-        if: ${{ inputs.dry_run != true }}
+        if: ${{ inputs.dry_run != true && inputs.dump_only != true }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -68,7 +97,7 @@ jobs:
           git push origin HEAD:master
 
       - name: theme_bot 에 올린다
-        if: ${{ inputs.dry_run != true }}
+        if: ${{ inputs.dry_run != true && inputs.dump_only != true }}
         env:
           CARD_REPO_TOKEN: ${{ secrets.CARD_REPO_TOKEN || secrets.CARDREPOTOKEN }}
         run: |
