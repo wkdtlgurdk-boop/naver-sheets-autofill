@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""테마 편입 후 +20% 간 종목의 공통점. theme_horizon.py 결과(events.csv)를 읽는다.
+"""테마 편입 후 10거래일 상승률 상위 20% 종목의 공통점. theme_horizon.py 결과(events.csv)를 읽는다.
 
     python analysis/theme_horizon.py      # 먼저
     python analysis/winner_traits.py
 
-'20% 종목' = 실린 날 종가 대비 D+10 종가가 +20% 이상(기본). D+5 기준도 같이 본다.
-구간마다 '20% 종목이 나온 비율'을 전체 평균(기준율)과 견준다.
+'상위 20%' = 실린 날 종가 대비 D+10 수익률로 전 건을 줄 세웠을 때 위 20%.
+'하위 20%' 는 아래 20%. 구간마다 상위 20% 에 든 비율을 기준율(20%)과 견주고,
+하위 20% 에 든 비율도 같이 적는다. D+5 도 같은 방식으로 따로 줄 세운다.
 
     시총       그날 종가 x 상장주식수. 주식수는 지금 값(네이버 시총 / 현재가)이라
                그사이 증자·감자가 있던 종목은 조금 어긋난다.
@@ -27,7 +28,7 @@ sys.path.insert(0, str(HERE))
 from theme_horizon import get_json  # noqa: E402
 
 INTEGRATION = "https://m.stock.naver.com/api/stock/{code}/integration"
-WIN = 20.0
+TOP = 0.2
 
 
 def to_num(text: str) -> float | None:
@@ -107,20 +108,28 @@ def main() -> int:
             "mcap": sh * px / 1e8 if sh and px else None,   # 억
         })
     rows10 = [r for r in rows if r["c2c10"] is not None]
-    base10 = sum(r["c2c10"] >= WIN for r in rows10) / len(rows10) * 100
     rows5 = [r for r in rows if r["c2c5"] is not None]
-    base5 = sum(r["c2c5"] >= WIN for r in rows5) / len(rows5) * 100
+    s10 = sorted(r["c2c10"] for r in rows10)
+    s5 = sorted(r["c2c5"] for r in rows5)
+    hi10, lo10 = s10[int(len(s10) * (1 - TOP))], s10[int(len(s10) * TOP)]
+    hi5 = s5[int(len(s5) * (1 - TOP))]
+    for r in rows:
+        r["top10"] = r["c2c10"] is not None and r["c2c10"] >= hi10
+        r["bot10"] = r["c2c10"] is not None and r["c2c10"] < lo10
+        r["top5"] = r["c2c5"] is not None and r["c2c5"] >= hi5
+    base10 = sum(r["top10"] for r in rows10) / len(rows10) * 100
+    base5 = sum(r["top5"] for r in rows5) / len(rows5) * 100
 
-    L = [f"# 테마 편입 후 +{WIN:g}% 간 종목의 공통점", "",
+    L = ["# 테마 편입 후 10거래일 상승률 상위 20% 종목의 공통점", "",
          f"대상: 테마에 실린 종목 {len(rows10)}건 (그날 25% 이상 급등·상한가 제외). "
-         f"D+10 종가 +{WIN:g}% 이상 **{sum(r['c2c10'] >= WIN for r in rows10)}건 "
-         f"(기준율 {base10:.1f}%)**, D+5 기준 {sum(r['c2c5'] >= WIN for r in rows5)}건 "
-         f"({base5:.1f}%).", "",
-         "표의 '20%↑ 비율'이 기준율보다 높으면 그 구간에서 20% 종목이 더 자주 나왔다는 뜻이다.", ""]
+         f"D+10 수익률로 줄 세워 **상위 20% = {hi10:+.2f}% 이상 {sum(r['top10'] for r in rows10)}건**, "
+         f"하위 20% = {lo10:+.2f}% 미만. D+5 상위 20% 는 {hi5:+.2f}% 이상.", "",
+         "'상위20% 비율'이 20% 보다 높으면 그 구간에서 상위 종목이 더 자주 나왔다는 뜻이다. "
+         "'하위20% 비율'은 반대로 크게 진 종목이 나온 비율.", ""]
 
     def table(title, key, order, note=""):
         L.extend([f"## {title}", ""] + ([note, ""] if note else []) + [
-            "| 구분 | 표본 | D+10 20%↑ 비율 | 배수 | D+5 20%↑ 비율 | D+10 평균 | D+10 -10%↓ |",
+            "| 구분 | 표본 | D+10 상위20% 비율 | 배수 | D+10 하위20% 비율 | D+5 상위20% 비율 | D+10 평균 |",
             "|---|---:|---:|---:|---:|---:|---:|"])
         groups: dict[str, list] = {}
         for r in rows:
@@ -135,12 +144,12 @@ def main() -> int:
             g5 = [r for r in g if r["c2c5"] is not None]
             if not g10:
                 continue
-            p10 = sum(r["c2c10"] >= WIN for r in g10) / len(g10) * 100
-            p5 = sum(r["c2c5"] >= WIN for r in g5) / len(g5) * 100 if g5 else 0
+            p10 = sum(r["top10"] for r in g10) / len(g10) * 100
+            p5 = sum(r["top5"] for r in g5) / len(g5) * 100 if g5 else 0
             avg = sum(r["c2c10"] for r in g10) / len(g10)
-            bad = sum(r["c2c10"] <= -10 for r in g10) / len(g10) * 100
-            L.append(f"| {k} | {len(g10)} | {p10:.1f}% | {p10 / base10:.2f}x | {p5:.1f}% | "
-                     f"{avg:+.2f}% | {bad:.0f}% |")
+            bad = sum(r["bot10"] for r in g10) / len(g10) * 100
+            L.append(f"| {k} | {len(g10)} | {p10:.1f}% | {p10 / base10:.2f}x | {bad:.1f}% | "
+                     f"{p5:.1f}% | {avg:+.2f}% |")
         L.append("")
 
     def cap_b(r):
@@ -170,13 +179,13 @@ def main() -> int:
           "1년반 동안 총 몇 번 실린 종목인가. 그 뒤에 실린 것까지 세므로 '오른 뒤 또 실린' 효과가 섞인다.")
 
     # 시총 x 직전 20일 표출 교차
-    L.extend(["## 시총 × 직전 20거래일 표출 (D+10 20%↑ 비율, 괄호는 표본)", "",
+    L.extend(["## 시총 × 직전 20거래일 표출 (D+10 상위20% 비율, 괄호는 표본)", "",
               "| 시총 \\ 표출 | 0회(처음) | 1~2회 | 3회+ |", "|---|---:|---:|---:|"])
     for cap in ["1500억 미만", "1500억~3천억", "3천억~5천억", "5천억~1조", "1조~5조", "5조+"]:
         cells = []
         for lo, hi in ((0, 0), (1, 2), (3, 999)):
             g = [r for r in rows10 if cap_b(r) == cap and lo <= r["prev20"] <= hi]
-            cells.append(f"{sum(r['c2c10'] >= WIN for r in g) / len(g) * 100:.1f}% ({len(g)})"
+            cells.append(f"{sum(r['top10'] for r in g) / len(g) * 100:.1f}% ({len(g)})"
                          if len(g) >= 15 else f"- ({len(g)})")
         L.append(f"| {cap} | " + " | ".join(cells) + " |")
     L.append("")
@@ -191,11 +200,11 @@ def main() -> int:
     table("시장", lambda r: r["market"], ["KOSDAQ", "KOSPI"])
 
     # 20% 종목이 많이 나온 테마 / 종목
-    win = [r for r in rows10 if r["c2c10"] >= WIN]
+    win = [r for r in rows10 if r["top10"]]
     heads = Counter(r["head"] for r in rows10)
     wheads = Counter(r["head"] for r in win)
-    L.extend(["## 20% 종목이 많이 나온 테마 (키워드 첫 마디, 20건 이상)", "",
-              "| 테마 | 표본 | 20%↑ 건수 | 비율 | 배수 |", "|---|---:|---:|---:|---:|"])
+    L.extend(["## 상위 20% 가 많이 나온 테마 (키워드 첫 마디, 20건 이상)", "",
+              "| 테마 | 표본 | 상위20% 건수 | 비율 | 배수 |", "|---|---:|---:|---:|---:|"])
     for h, n in sorted(heads.items(), key=lambda kv: -(wheads[kv[0]] / kv[1])):
         if n >= 20 and wheads[h] / n * 100 >= base10 * 1.3:
             L.append(f"| {h} | {n} | {wheads[h]} | {wheads[h] / n * 100:.1f}% | "
@@ -203,7 +212,7 @@ def main() -> int:
     L.append("")
 
     by_stock = Counter(r["name"] for r in win)
-    L.extend(["## 20% 를 여러 번 낸 종목", "", "| 종목 | 횟수 | 시장 | 주요 테마 |", "|---|---:|---|---|"])
+    L.extend(["## 상위 20% 에 여러 번 든 종목", "", "| 종목 | 횟수 | 시장 | 주요 테마 |", "|---|---:|---|---|"])
     for name, n in by_stock.most_common(20):
         rs = [r for r in win if r["name"] == name]
         L.append(f"| {name} | {n} | {rs[0]['market']} | "
@@ -212,14 +221,17 @@ def main() -> int:
 
     # 20% 종목 vs 나머지 중앙값 비교
     import statistics as st
-    rest = [r for r in rows10 if r["c2c10"] < WIN]
-    L.extend(["## 20% 종목 vs 나머지 (중앙값)", "", "| 항목 | 20% 종목 | 나머지 |", "|---|---:|---:|"])
+    rest = [r for r in rows10 if not r["top10"]]
+    bot = [r for r in rows10 if r["bot10"]]
+    L.extend(["## 상위 20% vs 나머지 vs 하위 20% (중앙값)", "",
+              "| 항목 | 상위 20% | 나머지 80% | 하위 20% |", "|---|---:|---:|---:|"])
     for label, k in (("시총(억)", "mcap"), ("직전 20일 표출", "prev20"), ("직전 60일 표출", "prev60"),
                      ("그날 상승률(%)", "rate"), ("그룹 크기", "size"),
                      ("이후 10일 안에 다시 실린 횟수", "after10")):
         a = [r[k] for r in win if r[k] is not None]
         b = [r[k] for r in rest if r[k] is not None]
-        L.append(f"| {label} | {st.median(a):,.1f} | {st.median(b):,.1f} |")
+        c = [r[k] for r in bot if r[k] is not None]
+        L.append(f"| {label} | {st.median(a):,.1f} | {st.median(b):,.1f} | {st.median(c):,.1f} |")
     L.append("")
     L.append("표본 30건 미만 칸은 우연일 수 있다.")
 
