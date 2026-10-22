@@ -386,8 +386,11 @@ def apply_mode(mode):
 # 날에도 테마 칸에는 넣지 않는다 — 순매수 상위는 테마가 아니다. 순매수 순위는 수급
 # 시트(supply_demand.py)가 쓰는 같은 네이버 API 에서 코스피·코스닥을 합쳐 금액순으로
 # 뽑고, ETF·ETN 은 뺀다.
-NO_THEME_TOP = 5
-INVESTOR_SLOTS = (("FOREIGNER", "외국인 순매수"), ("ORGANIZATION", "기관 순매수"))
+# '오늘의 수급' 칸마다 순매수 상위 몇 종목. 5 였다가 10 으로 (2026-10-22 사용자 지정).
+# 칸 이름도 '외국인 순매수'·'기관 순매수' 에서 '외인 수급'·'기관 수급' 으로 바꿨다 -- 요약
+# 카드가 두 칸을 1·2 순위처럼 적어 'TOP2' 로 읽혔다.
+SUPPLY_TOP = 10
+INVESTOR_SLOTS = (("FOREIGNER", "외인 수급"), ("ORGANIZATION", "기관 수급"))
 
 
 def no_theme_mode(out_dir) -> bool:
@@ -395,7 +398,11 @@ def no_theme_mode(out_dir) -> bool:
 
 
 def investor_groups(day, fetch=None, quote=None):
-    """외국인·기관 순매수 상위 그룹 두 개. 오늘 확정치가 아니면 멈춘다(다음 회차가 다시 돈다)."""
+    """외국인·기관 순매수 상위 그룹 두 개. 오늘 확정치가 아니면 멈춘다(다음 회차가 다시 돈다).
+
+    종목은 'top5' 칸에 담는다 -- 카드·게시가 테마 그룹과 같은 모양을 읽기 때문이다.
+    이름과 달리 SUPPLY_TOP(10)개다.
+    """
     import supply_demand as sd
     fetch = fetch or sd.fetch
     quote = quote or fetch_stock_by_code
@@ -423,7 +430,7 @@ def investor_groups(day, fetch=None, quote=None):
                 continue
             q = dict(q, net_buy=round(int(r.get("accTradeAmount") or 0) / 1e6))
             top.append(q)
-            if len(top) == NO_THEME_TOP:
+            if len(top) == SUPPLY_TOP:
                 break
         print(f"[테마 없음] {label}: " + ", ".join(
             f"{q['name']} {q['net_buy']:,}백만 {q['rate']:+.2f}%" for q in top), file=sys.stderr)

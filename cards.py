@@ -88,7 +88,9 @@ def no_theme_day() -> bool:
 
 
 SUPPLY_DIR = "supply"    # 그 날 카드 폴더 아래 '오늘의 수급' 카드 자리
-SUPPLY_FOOTER = "외국인·기관 순매수 상위 5종목 · 코스피·코스닥 합산, 순매수 금액순, ETF 제외"
+SUPPLY_FOOTER = (f"외국인·기관 순매수 상위 {ts.SUPPLY_TOP}종목 · 코스피·코스닥 합산, "
+                 "순매수 금액순, ETF 제외")
+SUPPLY_BADGE = "수급"   # 수급 카드 배지. '1 / 2'·'MONTHLY' 대신 (10/22 사용자 지정)
 
 
 def footer_text(mode: dict | None = None) -> str:
@@ -165,14 +167,30 @@ class Card:
 
 def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | None = None,
                amount_label: str = "거래대금", box_label: str = "묶은 테마",
-               footer: str | None = None, show_rate: bool = True) -> Card:
+               footer: str | None = None, show_rate: bool = True,
+               badge: str | None = None, show_total: bool = True) -> Card:
     """테마 한 장. rank 는 거래대금 순위(배지의 '1 / 7').
     '오늘의 수급' 카드도 이 판을 쓴다 — 금액 칸이 거래대금 대신 순매수고,
-    상승률은 적지 않는다(show_rate=False, 10/15 사용자 지정)."""
-    c = Card(now, f"{rank} / {total}", footer)
+    상승률은 적지 않는다(show_rate=False, 10/15 사용자 지정). 수급은 10종목이라
+    (10/22) 6종목 이상이면 행 간격·글자를 줄이고 아래 상자를 뺀다. 수급 카드는 합계도
+    적지 않는다(show_total=False, 10/22 사용자 지정) -- 그 자리만큼 종목 줄을 올린다."""
+    c = Card(now, badge or f"{rank} / {total}", footer)
     top = group["top5"]
     c.title(spaced(group["keyword"]),
             sub or f"조건 충족 {group['total_qualifying']}종목 중 상위 {len(top)}개")
+
+    if not show_total:
+        c.d.rectangle([M, 375, R, 376], fill=RULE_S)
+        y = 446
+        for i, s in enumerate(top):
+            c.d.text((M, y), s["name"], font=font("bold", 34),
+                     fill=GOLD if i == 0 else INK, anchor="ls")
+            c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("black", 34),
+                     fill=INK, anchor="rs")
+            if i < len(top) - 1:
+                c.row_rule(y + 26)
+            y += 74
+        return c
 
     # 요약 두 칸: 평균상승률 / 거래대금 (수급 카드는 금액 한 칸)
     ax = 378
@@ -187,10 +205,13 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
              font=font("black", SZ["stat_value"]), fill=INK, anchor="ls")
     c.d.rectangle([M, 515, R, 516], fill=RULE_S)
 
-    # 종목 5행. 1위만 금색 — 원본이 그렇다.
-    y = 586
+    # 종목 5행. 1위만 금색 — 원본이 그렇다. 6행 이상(수급 10종목)은 촘촘하게.
+    dense = len(top) > 5
+    step, gap = (60, 22) if dense else (92, 32)
+    name_sz, num_sz = (32, 32) if dense else (SZ["row_name"], SZ["row_rate"])
+    y = 576 if dense else 586
     for i, s in enumerate(top):
-        c.d.text((M, y), s["name"], font=font("bold", SZ["row_name"]),
+        c.d.text((M, y), s["name"], font=font("bold", name_sz),
                  fill=GOLD if i == 0 else INK, anchor="ls")
         if show_rate:
             c.d.text((813, y), f"{s['rate']:+.2f}%", font=font("black", SZ["row_rate"]),
@@ -198,11 +219,13 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
             c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("medium", SZ["row_amt"]),
                      fill=MUTED, anchor="rs")
         else:
-            c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("black", SZ["row_rate"]),
+            c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("black", num_sz),
                      fill=INK, anchor="rs")
         if i < len(top) - 1:
-            c.row_rule(y + 32)
-        y += 92
+            c.row_rule(y + gap)
+        y += step
+    if dense:
+        return c       # 10행이면 상자 자리가 없다. 기준은 부제와 바닥글에 있다.
 
     # 묶은 테마 — 이 그룹이 네이버의 어느 테마들을 합친 것인지 밝힌다.
     c.d.rounded_rectangle([M, 1057, R, 1160], radius=14, fill=PANEL)
@@ -216,8 +239,9 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
 
 def summary_card(now: datetime, groups: list[dict], market: dict, *,
                  title: str = "오늘의 테마", sub: str | None = None,
-                 footer: str | None = None, show_rate: bool = True) -> Card:
-    c = Card(now, "MONTHLY", footer)
+                 footer: str | None = None, show_rate: bool = True,
+                 badge: str = "MONTHLY") -> Card:
+    c = Card(now, badge, footer)
     c.title(title, sub or f"조건 충족 테마 {len(groups)}개 · 거래대금 순")
 
     for x, key, label in ((M, "KOSPI", "KOSPI"), (564, "KOSDAQ", "KOSDAQ")):
@@ -240,20 +264,23 @@ def summary_card(now: datetime, groups: list[dict], market: dict, *,
 
     y = 615
     for i, g in enumerate(groups):
-        c.d.text((M, y), str(i + 1), font=font("medium", SZ["m_rank"]),
-                 fill=GOLD if i == 0 else MUTED, anchor="ls")
         amt = f"{sum(eok(s['amount']) for s in g['top5']):,}억"
         rate_f = font("black", SZ["m_rate"])
         if not show_rate:
-            # 수급 요약: 상승률 없이 순매수 합만 오른쪽에 크게.
-            room = 1008 - c.d.textlength(amt, font=rate_f) - NAME_GAP - 148
+            # 수급 요약: 순위 번호도 합계도 없이(외인·기관은 순위가 아니다 -- 'TOP2' 로
+            # 읽혔다, 10/22) 칸 이름과 그 칸 1위 종목만 적는다.
+            lead = f"1위 {g['top5'][0]['name']}" if g["top5"] else ""
+            lead_f = font("medium", SZ["m_amt"])
+            room = 1008 - c.d.textlength(lead, font=lead_f) - NAME_GAP - M
             name_f, name = shrink(c.d, g["keyword"], "bold", SZ["m_name"], room, MIN_M_NAME)
-            c.d.text((148, y), name, font=name_f, fill=GOLD if i == 0 else INK, anchor="ls")
-            c.d.text((1008, y), amt, font=rate_f, fill=INK, anchor="rs")
+            c.d.text((M, y), name, font=name_f, fill=INK, anchor="ls")
+            c.d.text((1008, y), lead, font=lead_f, fill=MUTED, anchor="rs")
             if i < len(groups) - 1:
                 c.row_rule(y + 23)
             y += 72
             continue
+        c.d.text((M, y), str(i + 1), font=font("medium", SZ["m_rank"]),
+                 fill=GOLD if i == 0 else MUTED, anchor="ls")
         rate = f"{avg_rate(g['top5']):+.2f}%"
         # 이름은 상승률 숫자 왼쪽까지만 쓴다. 10/2 요약 카드에서 긴 이름이
         # 상승률 위에 겹쳐 찍혔다 — 넘치면 글자를 줄이고, 그래도 넘치면 자른다.
@@ -297,15 +324,16 @@ def build_supply(out_dir: Path, supply: list[dict], market: dict, now: datetime)
     groups = [supply_view(g) for g in supply]
     made = []
     made.append(summary_card(now, groups, market, title="오늘의 수급",
-                             sub=f"외국인·기관 순매수 상위 {ts.NO_THEME_TOP}종목 · 순매수 금액",
-                             footer=SUPPLY_FOOTER, show_rate=False)
+                             sub=f"외국인·기관 순매수 상위 {ts.SUPPLY_TOP}종목",
+                             footer=SUPPLY_FOOTER, show_rate=False, badge=SUPPLY_BADGE)
                 .save(day / SUPPLY_DIR / "01_summary.png"))
     for i, g in enumerate(groups, 1):
         safe = "".join(ch for ch in g["keyword"] if ch.isalnum())
         made.append(theme_card(now, g, i, len(groups),
                                sub=f"코스피·코스닥 순매수 금액 상위 {len(g['top5'])}종목",
                                amount_label="순매수", box_label="기준",
-                               footer=SUPPLY_FOOTER, show_rate=False)
+                               footer=SUPPLY_FOOTER, show_rate=False, badge=SUPPLY_BADGE,
+                               show_total=False)
                     .save(day / SUPPLY_DIR / f"{i + 1:02d}_{safe}.png"))
     return made
 
