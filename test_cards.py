@@ -155,7 +155,7 @@ def test_no_theme_day_makes_one_card_and_supply_is_separate():
                          "net_buy": 120000},
                         {"name": "나", "code": "000002", "rate": 2.0, "amount": 500000,
                          "net_buy": 80000}]}
-              for k in ("외국인 순매수", "기관 순매수")]
+              for k in ("외인 수급", "기관 수급")]
     now = datetime(2026, 10, 15, 21, 0)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "20261015"
@@ -163,8 +163,24 @@ def test_no_theme_day_makes_one_card_and_supply_is_separate():
         check("테마 없음 카드", [str(p.relative_to(root)) for p in made], ["01_monthly.png"])
         made = cards.build_supply(Path(tmp), supply, MARKET, now)
         check("수급 카드 자리", [str(p.relative_to(root)) for p in made],
-              ["supply/01_summary.png", "supply/02_외국인순매수.png", "supply/03_기관순매수.png"])
+              ["supply/01_summary.png", "supply/02_외인수급.png", "supply/03_기관수급.png"])
     check("수급 카드 금액은 순매수", cards.supply_view(supply[0])["top5"][0]["amount"], 120000)
+
+
+def test_supply_card_fits_ten_rows_above_the_footer():
+    """수급은 10종목(10/22). 10행이 바닥글 선(1236) 위에 다 들어가고, 배지는 '수급'."""
+    top = [{"name": f"종목{i}", "code": f"{i:06d}", "rate": 0, "amount": 0,
+            "net_buy": 100000 - i * 5000} for i in range(10)]
+    g = cards.supply_view({"keyword": "외인 수급", "source_themes": ["외인 수급 상위"],
+                           "total_qualifying": 10, "top5": top})
+    now = datetime(2026, 10, 22, 21, 0)
+    card = cards.theme_card(now, g, 1, 2, amount_label="순매수", show_rate=False,
+                            badge=cards.SUPPLY_BADGE)
+    im = card.im.convert("L")
+    # 마지막 행(576 + 9*60 = 1116) 글자가 바닥글 선보다 위에 있다
+    ink_rows = [y for y in range(1060, 1236) if any(im.getpixel((x, y)) > 150 for x in range(68, 400))]
+    check("10행째가 찍혔다", bool(ink_rows), True)
+    check("바닥글 선 위", max(ink_rows) < 1200, True)
 
 
 def test_title_spaces_the_middle_dot_but_the_list_does_not():

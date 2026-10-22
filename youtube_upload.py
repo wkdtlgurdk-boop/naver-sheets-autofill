@@ -74,7 +74,7 @@ def date_mark(now: datetime) -> str:
 
 
 def ts_top() -> int:
-    return cards.ts.NO_THEME_TOP
+    return cards.ts.SUPPLY_TOP
 
 
 SUPPLY_MARK = "오늘의 수급"

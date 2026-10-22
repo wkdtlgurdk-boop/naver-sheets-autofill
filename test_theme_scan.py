@@ -668,7 +668,7 @@ def test_no_theme_day_uses_investor_top_buys():
                 "end_type": "etf" if code == "069500" else "stock"}
 
     got = ts.investor_groups("20261015", fake_fetch, fake_quote)
-    assert [g["keyword"] for g in got] == ["외국인 순매수", "기관 순매수"], got
+    assert [g["keyword"] for g in got] == ["외인 수급", "기관 수급"], got
     # 금액순, ETF(069500) 제외, 코스피·코스닥에 같은 종목이 겹치면 한 번만
     assert [q["code"] for q in got[0]["top5"]] == ["000660", "247540", "005930"], got[0]["top5"]
     assert got[0]["top5"][0]["net_buy"] == 90000, got[0]["top5"][0]
