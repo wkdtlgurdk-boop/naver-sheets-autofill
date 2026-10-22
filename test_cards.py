@@ -168,19 +168,22 @@ def test_no_theme_day_makes_one_card_and_supply_is_separate():
 
 
 def test_supply_card_fits_ten_rows_above_the_footer():
-    """수급은 10종목(10/22). 10행이 바닥글 선(1236) 위에 다 들어가고, 배지는 '수급'."""
+    """수급은 10종목(10/22). 10행이 바닥글 선(1236) 위에 다 들어가고, 배지는 '수급'.
+    합계 칸은 없다 -- 410~430 줄(예전 '순매수 합계' 숫자 자리)은 비어 있다."""
     top = [{"name": f"종목{i}", "code": f"{i:06d}", "rate": 0, "amount": 0,
             "net_buy": 100000 - i * 5000} for i in range(10)]
     g = cards.supply_view({"keyword": "외인 수급", "source_themes": ["외인 수급 상위"],
                            "total_qualifying": 10, "top5": top})
     now = datetime(2026, 10, 22, 21, 0)
     card = cards.theme_card(now, g, 1, 2, amount_label="순매수", show_rate=False,
-                            badge=cards.SUPPLY_BADGE)
+                            badge=cards.SUPPLY_BADGE, show_total=False)
     im = card.im.convert("L")
-    # 마지막 행(576 + 9*60 = 1116) 글자가 바닥글 선보다 위에 있다
+    # 마지막 행(446 + 9*74 = 1112) 글자가 바닥글 선보다 위에 있다
     ink_rows = [y for y in range(1060, 1236) if any(im.getpixel((x, y)) > 150 for x in range(68, 400))]
     check("10행째가 찍혔다", bool(ink_rows), True)
     check("바닥글 선 위", max(ink_rows) < 1200, True)
+    check("합계 칸 없음", any(im.getpixel((x, y)) > 150 for x in range(68, 600)
+                              for y in range(385, 410)), False)
 
 
 def test_title_spaces_the_middle_dot_but_the_list_does_not():
