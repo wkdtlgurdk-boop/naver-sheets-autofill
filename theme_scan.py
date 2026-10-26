@@ -67,6 +67,10 @@ MIN_PARTICIPATION = 0.2    # 구성종목 중 그만큼 오른 비율의 하한
 RELAXED_RULES = {"MIN_RATE": 3.0, "MID_RATE": 8.0, "MIN_COUNT": 2,
                  "PARTICIPATION_RATE": 1.0}
 MODE_FILE = "scan_mode.json"
+# 2026-10-27 사용자 지정: 기존 기준으로 테마가 이 수 미만(0·1개)이면 완화 기준으로 한 번 더 돈다.
+# 10/26 은 의료AI 하나만 잡히고, 로보티즈(+11%, 1,315억)·삼현(+8.4%, 437억) 둘이 오른
+# 로봇이 '3종목' 문턱에 걸려 빠졌다. 완화로 더 나온 것이 없으면 기존 결과를 그대로 쓴다.
+RELAX_BELOW = 2
 
 # Keyword override: any theme whose name matches (substring) one of these
 # patterns gets folded into the given keyword group, taking priority over
@@ -948,6 +952,27 @@ def derive(raw):
     return raw, final
 
 
+def relax(raw, final, rerun):
+    """기존 기준 결과가 RELAX_BELOW 개 미만일 때 완화 기준으로 다시 돌린다. (mode, raw, final).
+
+    완화로 그룹이 더 나와야 그것을 쓴다. 같거나 적으면 기준을 원래대로 돌려 기존 결과를
+    쓴다 -- 카드 바닥글이 '완화 기준'이라고 적는데 실제로는 기존 기준 테마만 있는 날이
+    생기지 않게.
+    """
+    strict = {k: globals()[k] for k in RELAXED_RULES}
+    relaxed = {"relaxed": True, "rules": dict(RELAXED_RULES)}
+    print(f"[완화] 기존 기준으로 그룹이 {len(final)}개라 문턱을 낮춰 다시 돕니다: "
+          f"{relaxed['rules']}", file=sys.stderr)
+    apply_mode(relaxed)
+    raw2, final2 = rerun()
+    if len(final2) > len(final):
+        print(f"[완화] {len(final)}개 → {len(final2)}개", file=sys.stderr)
+        return relaxed, raw2, final2
+    globals().update(strict)
+    print(f"[완화] 더 나온 그룹이 없어 기존 기준 결과({len(final)}개)를 씁니다", file=sys.stderr)
+    return {"relaxed": False, "rules": {}}, raw, final
+
+
 def main():
     args = [a for a in sys.argv[1:] if a != "--regroup"]
     regroup = "--regroup" in sys.argv
@@ -972,12 +997,8 @@ def main():
         memoize_fetches()
         mode = {"relaxed": False, "rules": {}}
         raw, final = derive(scan_themes())
-        if not final:
-            mode = {"relaxed": True, "rules": dict(RELAXED_RULES)}
-            print(f"[완화] 기존 기준으로 그룹이 0개라 문턱을 낮춰 다시 돕니다: "
-                  f"{mode['rules']}", file=sys.stderr)
-            apply_mode(mode)
-            raw, final = derive(scan_themes())
+        if len(final) < RELAX_BELOW:
+            mode, raw, final = relax(raw, final, lambda: derive(scan_themes()))
         if not final:
             kst = timezone(timedelta(hours=9))
             day = (os.environ.get("THEME_DAY") or datetime.now(kst).strftime("%Y-%m-%d")).replace("-", "")

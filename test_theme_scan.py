@@ -679,6 +679,28 @@ def test_no_theme_day_uses_investor_top_buys():
     assert [q["code"] for q in got[2]["top5"]] == ["000660", "247540", "005930"], got[2]["top5"]
 
 
+def test_relax_reruns_when_one_theme_and_keeps_only_if_more():
+    """10/27: 테마가 0·1개면 완화로 다시 돈다. 더 나오면 그것을, 아니면 기존 결과와 기존 문턱."""
+    old = ts.MIN_COUNT
+    strict = {k: getattr(ts, k) for k in ts.RELAXED_RULES}
+    seen = []
+
+    def more():
+        seen.append(ts.MIN_COUNT)
+        return ["raw2"], [{"keyword": "의료AI"}, {"keyword": "로봇"}]
+    mode, raw, final = ts.relax(["raw"], [{"keyword": "의료AI"}], more)
+    check("완화 문턱으로 다시 돌았다", seen, [ts.RELAXED_RULES["MIN_COUNT"]])
+    check("더 나왔으니 완화 결과", ([g["keyword"] for g in final], mode["relaxed"], raw),
+          (["의료AI", "로봇"], True, ["raw2"]))
+    for k, v in strict.items():
+        setattr(ts, k, v)
+
+    mode, raw, final = ts.relax(["raw"], [{"keyword": "의료AI"}], lambda: (["raw2"], [{"keyword": "의료AI"}]))
+    check("같으면 기존 결과", ([g["keyword"] for g in final], mode["relaxed"], raw), (["의료AI"], False, ["raw"]))
+    check("기존 문턱으로 돌아왔다", ts.MIN_COUNT, old)
+    check("하나면 완화 대상", 1 < ts.RELAX_BELOW, True)
+
+
 def test_no_theme_day_waits_for_settled_data():
     def stale(investor, market):
         return [{"itemcode": "000660", "accTradeAmount": 1, "bizdateFrom": "20261014",
