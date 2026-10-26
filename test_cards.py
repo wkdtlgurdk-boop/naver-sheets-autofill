@@ -155,7 +155,7 @@ def test_no_theme_day_makes_one_card_and_supply_is_separate():
                          "net_buy": 120000},
                         {"name": "나", "code": "000002", "rate": 2.0, "amount": 500000,
                          "net_buy": 80000}]}
-              for k in ("외인 수급", "기관 수급")]
+              for k in ("코스피 외인 수급", "코스피 기관 수급", "코스닥 외인 수급", "코스닥 기관 수급")]
     now = datetime(2026, 10, 15, 21, 0)
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "20261015"
@@ -163,8 +163,35 @@ def test_no_theme_day_makes_one_card_and_supply_is_separate():
         check("테마 없음 카드", [str(p.relative_to(root)) for p in made], ["01_monthly.png"])
         made = cards.build_supply(Path(tmp), supply, MARKET, now)
         check("수급 카드 자리", [str(p.relative_to(root)) for p in made],
-              ["supply/01_summary.png", "supply/02_외인수급.png", "supply/03_기관수급.png"])
+              ["supply/01_summary.png", "supply/02_코스피외인수급.png", "supply/03_코스피기관수급.png",
+               "supply/04_코스닥외인수급.png", "supply/05_코스닥기관수급.png"])
     check("수급 카드 금액은 순매수", cards.supply_view(supply[0])["top5"][0]["amount"], 120000)
+
+
+def test_threads_wording_for_zero_or_one_theme_and_market_split_supply():
+    """10/26 사용자 지정: 테마가 없거나 하나면 그렇게 말하고, 수급은 시장별 10위까지."""
+    import post_threads as pt
+    now = datetime(2026, 10, 26, 21, 0)
+    check("테마 없음", "장이 안좋아서 아쉽지만 상승테마가 없어요" in pt.caption_no_theme(now), True)
+    one = [{"keyword": "원전", "source_themes": [], "total_qualifying": 1,
+            "top5": [{"name": "가", "code": "000001", "rate": 5.0, "amount": 900000}]}]
+    text = pt.caption(one, now)
+    check("테마 하나", "장이 안좋아서 아쉽지만 상승테마가 하나밖에 없어요" in text, True)
+    check("그 테마도 적는다", "1. 원전 +5.00%" in text, True)
+    two = one + [dict(one[0], keyword="조선")]
+    check("둘이면 그 말 없음", "하나밖에" in pt.caption(two, now), False)
+    # 실제 이름 길이 (10/23 외인 순매수 상위 무렵)
+    NAMES = ["SK하이닉스", "삼성전자", "한화에어로스페이스", "HD현대중공업", "LS ELECTRIC",
+             "삼성바이오로직스", "알테오젠", "에코프로비엠", "레인보우로보틱스", "리가켐바이오"]
+    supply = [{"keyword": f"{m} {k}", "market": m,
+               "top5": [{"name": n, "code": f"{i:06d}", "rate": 0, "net_buy": 1000}
+                        for i, n in enumerate(NAMES, 1)]}
+              for m in ("코스피", "코스닥") for k in ("외인 수급", "기관 수급")]
+    text = pt.caption_supply(supply, now)
+    check("500자 안", len(text) <= pt.TEXT_LIMIT, True)
+    for k in ("[코스피 외인 수급]", "[코스피 기관 수급]", "[코스닥 외인 수급]", "[코스닥 기관 수급]"):
+        check(f"{k} 칸", k in text, True)
+    check("10위까지", "10.리가켐바이오" in text, True)
 
 
 def test_supply_card_fits_ten_rows_above_the_footer():
