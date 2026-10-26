@@ -88,7 +88,7 @@ def no_theme_day() -> bool:
 
 
 SUPPLY_DIR = "supply"    # 그 날 카드 폴더 아래 '오늘의 수급' 카드 자리
-SUPPLY_FOOTER = (f"외국인·기관 순매수 상위 {ts.SUPPLY_TOP}종목 · 코스피·코스닥 합산, "
+SUPPLY_FOOTER = (f"외국인·기관 순매수 상위 {ts.SUPPLY_TOP}종목 · 코스피·코스닥 따로, "
                  "순매수 금액순, ETF 제외")
 SUPPLY_BADGE = "수급"   # 수급 카드 배지. '1 / 2'·'MONTHLY' 대신 (10/22 사용자 지정)
 
@@ -298,9 +298,10 @@ def summary_card(now: datetime, groups: list[dict], market: dict, *,
 def no_theme_card(now: datetime, market: dict) -> Card:
     """주도 테마가 없는 날의 '오늘의 테마' 한 장. 지수 칸은 평소와 같고 순위표 자리에 '없음'."""
     c = summary_card(now, [], market, sub="조건 충족 테마 0개 · 완화 기준까지 확인")
-    c.d.text((W // 2, 800), "오늘은 주도 테마가 없습니다", font=font("black", 60),
+    # 2026-10-26 사용자 지정 문구.
+    c.d.text((W // 2, 800), "상승테마가 없어요", font=font("black", 60),
              fill=INK, anchor="mm")
-    c.d.text((W // 2, 880), "조건을 채운 테마가 한 곳도 나오지 않았습니다",
+    c.d.text((W // 2, 880), "장이 안좋아서 아쉽지만 조건을 채운 테마가 없었어요",
              font=font("medium", SZ["box_body"]), fill=MUTED, anchor="mm")
     c.d.text((W // 2, 940), "외국인·기관 순매수 상위는 '오늘의 수급' 글에서",
              font=font("medium", SZ["box_body"]), fill=GOLD, anchor="mm")
@@ -330,7 +331,7 @@ def build_supply(out_dir: Path, supply: list[dict], market: dict, now: datetime)
     for i, g in enumerate(groups, 1):
         safe = "".join(ch for ch in g["keyword"] if ch.isalnum())
         made.append(theme_card(now, g, i, len(groups),
-                               sub=f"코스피·코스닥 순매수 금액 상위 {len(g['top5'])}종목",
+                               sub=f"{g.get('market') or '코스피·코스닥'} 순매수 금액 상위 {len(g['top5'])}종목",
                                amount_label="순매수", box_label="기준",
                                footer=SUPPLY_FOOTER, show_rate=False, badge=SUPPLY_BADGE,
                                show_total=False)

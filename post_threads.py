@@ -143,7 +143,11 @@ def caption(groups: list[dict], now: datetime) -> str:
     글머리에 '시황정리' 를 쓰는 이유: 캐러셀 첫 장이 지수·거래대금·외인
     요약이고 그 뒤가 테마별 카드라, 글 전체를 묶는 말로는 테마보다 넓다.
     """
-    lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "", "오늘의 테마"]
+    lines = [f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", ""]
+    if len(groups) == 1:
+        # 2026-10-26 사용자 지정: 테마가 하나뿐인 날은 그렇다고 먼저 말한다.
+        lines += ["장이 안좋아서 아쉽지만 상승테마가 하나밖에 없어요", ""]
+    lines.append("오늘의 테마")
     for i, g in enumerate(cards.ranked(groups), 1):
         lines.append(f"{i}. {g['keyword']} {cards.avg_rate(g['top5']):+.2f}%")
     lines += ["", "오늘도 수고했개 🐾"]
@@ -158,22 +162,37 @@ def caption(groups: list[dict], now: datetime) -> str:
 def caption_no_theme(now: datetime) -> str:
     """주도 테마가 없는 날의 시황정리. 순매수 상위는 바로 뒤 '수급정리' 글에 따로 있다."""
     return "\n".join([f"멍! {caption_date(now)} 시황정리 물어왔개 🐕", "",
-                      "오늘의 테마: 없음",
-                      "조건을 채운 주도 테마가 한 곳도 없었개 (완화 기준까지 확인)",
+                      "장이 안좋아서 아쉽지만 상승테마가 없어요",   # 2026-10-26 사용자 지정
+                      "(완화 기준까지 확인했개)",
                       "", "외인·기관 순매수 상위는 수급정리 글에서 보개 🐾"])
 
 
 def caption_supply(supply: list[dict], now: datetime) -> str:
-    """'오늘의 수급' 글. 칸마다 순매수 금액 상위 종목을 적는다."""
+    """'오늘의 수급' 글. 칸(코스피·코스닥 × 외인·기관)마다 순매수 상위 종목 이름을 한 줄로.
+
+    2026-10-26 부터 칸이 넷, 칸마다 10종목이라 종목마다 줄을 바꾸고 금액을 붙이면 본문
+    상한(500자)을 넘는다. 금액은 카드에 있으므로 본문은 순서대로 이름만 적는다.
+    """
     lines = [f"멍! {caption_date(now)} 수급정리 물어왔개 🐕", ""]
     for g in supply:
-        lines.append(g["keyword"])
-        for i, st in enumerate(g["top5"], 1):
-            net = st.get("net_buy", st.get("amount", 0))
-            lines.append(f"{i}. {st['name']} {cards.eok(net):+,}억")
+        lines.append(f"[{g['keyword']}]")
+        lines.append(" ".join(f"{i}.{st['name']}" for i, st in enumerate(g["top5"], 1)))
         lines.append("")
-    lines.append("오늘도 수고했개 🐾")
-    return "\n".join(lines)[:TEXT_LIMIT]
+    tail = "금액은 카드에 있개, 오늘도 수고했개 🐾"
+    text = "\n".join(lines + [tail])
+    if len(text) <= TEXT_LIMIT:
+        return text
+    # 넘치면 꼬리 문구부터, 그래도 넘치면 칸마다 뒤 순위부터 줄인다.
+    text = "\n".join(lines).rstrip()
+    keep = 10
+    while len(text) > TEXT_LIMIT and keep > 3:
+        keep -= 1
+        rows = [f"멍! {caption_date(now)} 수급정리 물어왔개 🐕", ""]
+        for g in supply:
+            rows += [f"[{g['keyword']}]",
+                     " ".join(f"{i}.{st['name']}" for i, st in enumerate(g["top5"][:keep], 1)), ""]
+        text = "\n".join(rows).rstrip()
+    return text[:TEXT_LIMIT]
 
 
 def publish(user_id: str, token: str, urls: list[str], text: str) -> str:

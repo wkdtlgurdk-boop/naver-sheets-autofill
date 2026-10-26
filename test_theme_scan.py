@@ -668,11 +668,15 @@ def test_no_theme_day_uses_investor_top_buys():
                 "end_type": "etf" if code == "069500" else "stock"}
 
     got = ts.investor_groups("20261015", fake_fetch, fake_quote)
-    assert [g["keyword"] for g in got] == ["외인 수급", "기관 수급"], got
-    # 금액순, ETF(069500) 제외, 코스피·코스닥에 같은 종목이 겹치면 한 번만
-    assert [q["code"] for q in got[0]["top5"]] == ["000660", "247540", "005930"], got[0]["top5"]
+    # 2026-10-26: 코스피·코스닥을 따로 (시장 × 투자자 네 칸)
+    assert [g["keyword"] for g in got] == ["코스피 외인 수급", "코스피 기관 수급",
+                                           "코스닥 외인 수급", "코스닥 기관 수급"], got
+    assert [g["market"] for g in got] == ["코스피", "코스피", "코스닥", "코스닥"], got
+    # 금액순, ETF(069500) 제외. 코스닥 종목은 코스닥 칸에만
+    assert [q["code"] for q in got[0]["top5"]] == ["000660", "005930"], got[0]["top5"]
     assert got[0]["top5"][0]["net_buy"] == 90000, got[0]["top5"][0]
-    assert [q["code"] for q in got[1]["top5"]] == ["035420", "247540", "000660"], got[1]["top5"]
+    assert [q["code"] for q in got[1]["top5"]] == ["035420", "000660"], got[1]["top5"]
+    assert [q["code"] for q in got[2]["top5"]] == ["000660", "247540", "005930"], got[2]["top5"]
 
 
 def test_no_theme_day_waits_for_settled_data():
