@@ -168,31 +168,16 @@ def caption_no_theme(now: datetime) -> str:
 
 
 def caption_supply(supply: list[dict], now: datetime) -> str:
-    """'오늘의 수급' 글. 칸(코스피·코스닥 × 외인·기관)마다 순매수 상위 종목 이름을 한 줄로.
+    """'오늘의 수급' 글. 종목은 카드에 있으므로 본문에는 적지 않는다 (2026-10-27 사용자 지정).
 
-    2026-10-26 부터 칸이 넷, 칸마다 10종목이라 종목마다 줄을 바꾸고 금액을 붙이면 본문
-    상한(500자)을 넘는다. 금액은 카드에 있으므로 본문은 순서대로 이름만 적는다.
+    카드 순서(코스피·코스닥 × 외인·기관)만 한 줄로 알려 준다.
     """
+    order = " · ".join(g["keyword"] for g in supply)
     lines = [f"멍! {caption_date(now)} 수급정리 물어왔개 🐕", ""]
-    for g in supply:
-        lines.append(f"[{g['keyword']}]")
-        lines.append(" ".join(f"{i}.{st['name']}" for i, st in enumerate(g["top5"], 1)))
-        lines.append("")
-    tail = "금액은 카드에 있개, 오늘도 수고했개 🐾"
-    text = "\n".join(lines + [tail])
-    if len(text) <= TEXT_LIMIT:
-        return text
-    # 넘치면 꼬리 문구부터, 그래도 넘치면 칸마다 뒤 순위부터 줄인다.
-    text = "\n".join(lines).rstrip()
-    keep = 10
-    while len(text) > TEXT_LIMIT and keep > 3:
-        keep -= 1
-        rows = [f"멍! {caption_date(now)} 수급정리 물어왔개 🐕", ""]
-        for g in supply:
-            rows += [f"[{g['keyword']}]",
-                     " ".join(f"{i}.{st['name']}" for i, st in enumerate(g["top5"][:keep], 1)), ""]
-        text = "\n".join(rows).rstrip()
-    return text[:TEXT_LIMIT]
+    if order:
+        lines += [f"카드 순서: {order}", ""]
+    lines.append("순매수 상위는 카드에서 보개, 오늘도 수고했개 🐾")
+    return "\n".join(lines)[:TEXT_LIMIT]
 
 
 def publish(user_id: str, token: str, urls: list[str], text: str) -> str:

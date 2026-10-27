@@ -163,8 +163,8 @@ def test_no_theme_day_makes_one_card_and_supply_is_separate():
         check("테마 없음 카드", [str(p.relative_to(root)) for p in made], ["01_monthly.png"])
         made = cards.build_supply(Path(tmp), supply, MARKET, now)
         check("수급 카드 자리", [str(p.relative_to(root)) for p in made],
-              ["supply/01_summary.png", "supply/02_코스피외인수급.png", "supply/03_코스피기관수급.png",
-               "supply/04_코스닥외인수급.png", "supply/05_코스닥기관수급.png"])
+              ["supply/01_코스피외인수급.png", "supply/02_코스피기관수급.png",
+               "supply/03_코스닥외인수급.png", "supply/04_코스닥기관수급.png"])
     check("수급 카드 금액은 순매수", cards.supply_view(supply[0])["top5"][0]["amount"], 120000)
 
 
@@ -189,9 +189,8 @@ def test_threads_wording_for_zero_or_one_theme_and_market_split_supply():
               for m in ("코스피", "코스닥") for k in ("외인 수급", "기관 수급")]
     text = pt.caption_supply(supply, now)
     check("500자 안", len(text) <= pt.TEXT_LIMIT, True)
-    for k in ("[코스피 외인 수급]", "[코스피 기관 수급]", "[코스닥 외인 수급]", "[코스닥 기관 수급]"):
-        check(f"{k} 칸", k in text, True)
-    check("10위까지", "10.리가켐바이오" in text, True)
+    check("카드 순서", "코스피 외인 수급 · 코스피 기관 수급 · 코스닥 외인 수급 · 코스닥 기관 수급" in text, True)
+    check("종목 이름은 글에 없음 (10/27)", any(n in text for n in NAMES), False)
 
 
 def test_supply_card_fits_ten_rows_above_the_footer():

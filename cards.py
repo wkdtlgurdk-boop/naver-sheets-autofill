@@ -320,14 +320,13 @@ def build_no_theme(out_dir: Path, market: dict, now: datetime) -> list[Path]:
 
 
 def build_supply(out_dir: Path, supply: list[dict], market: dict, now: datetime) -> list[Path]:
-    """'오늘의 수급': <날짜>/supply/ 아래 요약 + 외국인·기관 카드. 금액은 순매수, 상승률은 없다."""
+    """'오늘의 수급': <날짜>/supply/ 아래 외국인·기관 카드만. 금액은 순매수, 상승률은 없다.
+
+    2026-10-27 사용자 지정: 요약(정리본) 카드는 필요 없다 -- 코스피·코스닥 x 외인·기관 네 장이면 된다.
+    """
     day = out_dir / f"{now:%Y%m%d}"
     groups = [supply_view(g) for g in supply]
     made = []
-    made.append(summary_card(now, groups, market, title="오늘의 수급",
-                             sub=f"외국인·기관 순매수 상위 {ts.SUPPLY_TOP}종목",
-                             footer=SUPPLY_FOOTER, show_rate=False, badge=SUPPLY_BADGE)
-                .save(day / SUPPLY_DIR / "01_summary.png"))
     for i, g in enumerate(groups, 1):
         safe = "".join(ch for ch in g["keyword"] if ch.isalnum())
         made.append(theme_card(now, g, i, len(groups),
@@ -335,7 +334,7 @@ def build_supply(out_dir: Path, supply: list[dict], market: dict, now: datetime)
                                amount_label="순매수", box_label="기준",
                                footer=SUPPLY_FOOTER, show_rate=False, badge=SUPPLY_BADGE,
                                show_total=False)
-                    .save(day / SUPPLY_DIR / f"{i + 1:02d}_{safe}.png"))
+                    .save(day / SUPPLY_DIR / f"{i:02d}_{safe}.png"))
     return made
 
 
