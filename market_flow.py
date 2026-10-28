@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""시장 전체 외인·기관 순매수(코스피·코스닥)와 그 한 줄 평 (2026-10-28 사용자 지정).
+"""시장 전체 외인·기관 순매수(코스피·코스닥)와 그 한 문장 (2026-10-28 사용자 지정).
 
-수급정리 스레드 본문에 '오늘 외인이 샀다, 기관이 많이 팔았다, 순매수로 돌아섰다' 같은
-한 줄을 칸마다 단다. 카드의 순매수 상위 10종목과 달리 이 값은 **시장 전체 합계**라
+수급정리 스레드 본문에 '오늘 코스피는 외인은 순매수, 기관은 순매도 했다개' 같은
+평문을 시장마다 한 줄 단다. 카드의 순매수 상위 10종목과 달리 이 값은 **시장 전체 합계**라
 부호가 있다 -- 팔았는지 샀는지를 말할 수 있다.
 
     python market_flow.py YYYYMMDD     # market_flow.json 을 쓴다 (supply-demand 워크플로)
@@ -22,8 +22,6 @@ URL = "https://m.stock.naver.com/api/index/{market}/trend?bizdate={day}"
 FLOW_FILE = "market_flow.json"
 MARKETS = (("KOSPI", "코스피"), ("KOSDAQ", "코스닥"))
 WHO = (("foreignValue", "외인"), ("institutionalValue", "기관"))
-HISTORY = 20          # 평소 규모를 잴 거래일 수
-BIG, SMALL = 2.0, 0.5  # 평소 대비 이 배수 이상이면 '많이', 이하면 '조금'
 
 
 def _num(text) -> int:
@@ -44,7 +42,7 @@ def fetch_day(market: str, day: str) -> dict | None:
     return {"date": str(got.get("bizdate") or day), **vals}
 
 
-def history(market: str, day: str, n: int = HISTORY + 1, fetch=fetch_day) -> list[dict]:
+def history(market: str, day: str, n: int = 1, fetch=fetch_day) -> list[dict]:
     """day 포함 최근 n 거래일, 최신이 뒤."""
     out, d = [], datetime.strptime(day, "%Y%m%d").date()
     tries = 0
@@ -60,53 +58,35 @@ def history(market: str, day: str, n: int = HISTORY + 1, fetch=fetch_day) -> lis
 
 def won(eok: int) -> str:
     a = abs(eok)
-    return f"{a / 10000:.1f}조" if a >= 10000 else f"{a:,}억"
+    return f"{'+' if eok > 0 else '-' if eok < 0 else ''}{a / 10000:.1f}조" if a >= 10000 else f"{eok:+,}억"
 
 
-def verdict(values: list[int]) -> str:
-    """최근 거래일 순매수(억원, 오래된 것부터, 마지막이 오늘)로 한 줄 평."""
-    if not values:
-        return "자료 없음"
-    today = values[-1]
-    if today == 0:
-        return "거의 안 움직였다"
-    side = "샀다" if today > 0 else "팔았다"
-    past = values[:-1]
-    usual = sum(abs(v) for v in past[-HISTORY:]) / len(past[-HISTORY:]) if past else 0
-    size = ""
-    if usual:
-        ratio = abs(today) / usual
-        size = "많이 " if ratio >= BIG else ("적게 " if ratio <= SMALL else "")
-    # 같은 방향이 며칠째인지 / 바로 전날과 반대면 전환
-    streak = 1
-    for v in reversed(past):
-        if (v > 0) == (today > 0) and v != 0:
-            streak += 1
-        else:
-            break
-    tail = ""
-    if past and (past[-1] > 0) != (today > 0) and past[-1] != 0:
-        opp = 0
-        for v in reversed(past):
-            if (v > 0) != (today > 0) and v != 0:
-                opp += 1
-            else:
-                break
-        tail = f" · {opp}일 만에 순{'매수' if today > 0 else '매도'} 전환"
-    elif streak >= 3:
-        tail = f" · {streak}일 연속 순{'매수' if today > 0 else '매도'}"
-    return f"{size}{side} ({'+' if today > 0 else '-'}{won(today)}){tail}"
+def side(eok: int) -> str:
+    return "순매수" if eok > 0 else "순매도" if eok < 0 else "보합"
+
+
+def sentence(label: str, foreign: int, inst: int) -> str:
+    """'오늘 코스피는 외인은 순매수, 기관은 순매도 했다개 (외인 +5,826억 · 기관 -2,824억)'.
+
+    2026-10-28 사용자 지정: 많이·적게·연속 같은 말 없이 평문 한 문장. 금액은 아침 시그널
+    봇의 [수급] 줄처럼 괄호에 붙인다.
+    """
+    josa = "은" if (ord(label[-1]) - 0xAC00) % 28 else "는"     # 코스닥은 / 코스피는
+    f, o = side(foreign), side(inst)
+    if f == o:
+        body = f"외인·기관 모두 {f}"
+    else:
+        body = f"외인은 {f}, 기관은 {o}"
+    return f"오늘 {label}{josa} {body} 했다개 (외인 {won(foreign)} · 기관 {won(inst)})"
 
 
 def lines(flow: dict) -> list[str]:
-    """market_flow.json -> 본문 줄들. '코스피 외인이 많이 샀다 (+7,677억) · 3일 만에 순매수 전환'."""
+    """market_flow.json -> 시장마다 한 문장 (오늘 값만 쓴다)."""
     out = []
     for market, label in MARKETS:
         rows = flow.get(market) or []
-        for key, who in WHO:
-            vals = [r[key] for r in rows]
-            if vals:
-                out.append(f"{label} {who}이 {verdict(vals)}")
+        if rows:
+            out.append(sentence(label, rows[-1]["foreignValue"], rows[-1]["institutionalValue"]))
     return out
 
 
