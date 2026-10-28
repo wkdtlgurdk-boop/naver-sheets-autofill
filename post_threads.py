@@ -170,7 +170,7 @@ def caption_no_theme(now: datetime) -> str:
 def caption_supply(supply: list[dict], now: datetime, flow: dict | None = None) -> str:
     """'오늘의 수급' 글. 종목은 카드에 있으므로 본문에는 적지 않는다 (2026-10-27 사용자 지정).
 
-    카드 순서는 적지 않고, 시장 전체 외인·기관이 오늘 샀는지 팔았는지 한 줄 평만 단다
+    카드 순서는 적지 않고, 시장 전체 외인·기관이 오늘 순매수인지 순매도인지 시장마다 평문 한 문장만 단다
     (2026-10-28 사용자 지정, market_flow.py). 그 자료가 없으면 인사만.
     """
     import market_flow
