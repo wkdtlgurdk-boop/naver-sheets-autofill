@@ -62,6 +62,7 @@ jobs:
         run: |
           python test_supply_demand.py
           python test_feed_export.py
+          python test_market_flow.py
 
       # Writes nothing unless all four blocks (외인/기관 x 코스피/코스닥) come
       # back final. A holiday or a mid-session run exits 0 without touching the
@@ -145,6 +146,8 @@ jobs:
         if: steps.supply_post.outputs.go == '1'
         run: |
           python supply_top.py
+          # 시장 전체 외인·기관 한 줄 평 (스레드 본문). 못 받아도 카드·게시는 그대로 간다.
+          python market_flow.py "$(echo "$THEME_DAY" | tr -d '-')" || echo "시장 수급 한 줄 평 없이 갑니다"
           python market_summary.py > /tmp/market_summary.json
           mv /tmp/market_summary.json market_summary.json
 
