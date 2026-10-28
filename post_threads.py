@@ -167,15 +167,17 @@ def caption_no_theme(now: datetime) -> str:
                       "", "외인·기관 순매수 상위는 수급정리 글에서 보개 🐾"])
 
 
-def caption_supply(supply: list[dict], now: datetime) -> str:
+def caption_supply(supply: list[dict], now: datetime, flow: dict | None = None) -> str:
     """'오늘의 수급' 글. 종목은 카드에 있으므로 본문에는 적지 않는다 (2026-10-27 사용자 지정).
 
-    카드 순서(코스피·코스닥 × 외인·기관)만 한 줄로 알려 준다.
+    카드 순서는 적지 않고, 시장 전체 외인·기관이 오늘 샀는지 팔았는지 한 줄 평만 단다
+    (2026-10-28 사용자 지정, market_flow.py). 그 자료가 없으면 인사만.
     """
-    order = " · ".join(g["keyword"] for g in supply)
+    import market_flow
     lines = [f"멍! {caption_date(now)} 수급정리 물어왔개 🐕", ""]
-    if order:
-        lines += [f"카드 순서: {order}", ""]
+    comments = market_flow.lines(flow or {})
+    if comments:
+        lines += comments + [""]
     lines.append("순매수 상위는 카드에서 보개, 오늘도 수고했개 🐾")
     return "\n".join(lines)[:TEXT_LIMIT]
 
@@ -233,8 +235,9 @@ def main() -> int:
     if "--supply" in sys.argv:
         # 오늘의 수급 — 테마와 따로 매일 올린다 (10/15 사용자 지정, supply-demand 워크플로).
         from supply_top import load_supply
+        import market_flow
         posts = [("수급정리", sorted((card_dir / day / cards.SUPPLY_DIR).glob("*.png")),
-                  cards.SUPPLY_DIR, caption_supply(load_supply(here), now))]
+                  cards.SUPPLY_DIR, caption_supply(load_supply(here), now, market_flow.load(here)))]
         return publish_all(posts, user_id, token, now, card_dir, day)
     groups = json.loads((here / "final_groups.json").read_text(encoding="utf-8"))
     if not groups and cards.no_theme_day():

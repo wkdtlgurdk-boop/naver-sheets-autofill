@@ -8,3 +8,4 @@ service-account*.json
 cards/
 scan_mode.json
 analysis/cache/
+market_flow.json
