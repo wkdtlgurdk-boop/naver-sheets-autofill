@@ -25,8 +25,9 @@ def test_sentence():
 
 def test_lines_and_skip_holidays():
     rows = [{"date": "20261027", "foreignValue": 300, "institutionalValue": -300}]
-    check("시장마다 한 줄", mf.lines({"KOSPI": rows}),
-          ["오늘 코스피는 외인은 순매수, 기관은 순매도 했다개 (외인 +300억 · 기관 -300억)"])
+    check("시장마다 세 줄", mf.lines({"KOSPI": rows}),
+          ["[코스피]", "외인 🔴 순매수 +300억", "기관 🔵 순매도 -300억"])
+    check("두 시장 사이 빈 줄", mf.lines({"KOSPI": rows, "KOSDAQ": rows})[3], "")
     check("자료 없으면 빈 줄", mf.lines({}), [])
 
     def fake(market, day):

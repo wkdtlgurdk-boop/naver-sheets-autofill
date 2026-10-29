@@ -183,8 +183,11 @@ def theme_card(now: datetime, group: dict, rank: int, total: int, *, sub: str | 
         c.d.rectangle([M, 375, R, 376], fill=RULE_S)
         y = 446
         for i, s in enumerate(top):
-            c.d.text((M, y), s["name"], font=font("bold", 34),
-                     fill=GOLD if i == 0 else INK, anchor="ls")
+            # 2026-10-29 사용자 지정: 수급 10종목에 순위 번호를 붙인다.
+            c.d.text((M, y), str(i + 1), font=font("medium", 30),
+                     fill=GOLD if i == 0 else MUTED, anchor="ls")
+            c.d.text((M + RANK_W, y), fit(c.d, s["name"], font("bold", 34), 1008 - 200 - M - RANK_W),
+                     font=font("bold", 34), fill=GOLD if i == 0 else INK, anchor="ls")
             c.d.text((1008, y), f"{eok(s['amount']):,}억", font=font("black", 34),
                      fill=INK, anchor="rs")
             if i < len(top) - 1:
@@ -338,6 +341,7 @@ def build_supply(out_dir: Path, supply: list[dict], market: dict, now: datetime)
     return made
 
 
+RANK_W = 58          # 수급 카드 순위 번호 칸 너비
 NAME_GAP = 28        # 요약 카드에서 테마 이름과 상승률 사이 최소 간격
 MIN_TITLE = 48       # 제목은 이 크기까지만 줄인다 (원래 73)
 MIN_M_NAME = 26      # 요약 카드 테마 이름 (원래 34)

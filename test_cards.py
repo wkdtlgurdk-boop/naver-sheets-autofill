@@ -189,7 +189,7 @@ def test_threads_wording_for_zero_or_one_theme_and_market_split_supply():
               for m in ("코스피", "코스닥") for k in ("외인 수급", "기관 수급")]
     text = pt.caption_supply(supply, now)
     check("500자 안", len(text) <= pt.TEXT_LIMIT, True)
-    check("카드 순서", "코스피 외인 수급 · 코스피 기관 수급 · 코스닥 외인 수급 · 코스닥 기관 수급" in text, True)
+    check("카드 순서는 글에 없음 (10/28)", "코스피 외인 수급 ·" in text, False)
     check("종목 이름은 글에 없음 (10/27)", any(n in text for n in NAMES), False)
 
 

@@ -80,13 +80,27 @@ def sentence(label: str, foreign: int, inst: int) -> str:
     return f"오늘 {label}{josa} {body} 했다개 (외인 {won(foreign)} · 기관 {won(inst)})"
 
 
+MARK = {"순매수": "🔴", "순매도": "🔵", "보합": "⚪"}
+
+
+def block(label: str, foreign: int, inst: int) -> list[str]:
+    """2026-10-29 사용자 지정: 한 문장은 읽기 어려워 시장 이름 한 줄 + 외인·기관 한 줄씩.
+
+    [코스피]
+    외인 🔴 순매수 +5,826억
+    기관 🔵 순매도 -2,824억
+    """
+    return [f"[{label}]"] + [f"{who} {MARK[side(v)]} {side(v)} {won(v)}"
+                             for who, v in (("외인", foreign), ("기관", inst))]
+
+
 def lines(flow: dict) -> list[str]:
-    """market_flow.json -> 시장마다 한 문장 (오늘 값만 쓴다)."""
-    out = []
+    """market_flow.json -> 시장마다 세 줄, 시장 사이는 빈 줄 (오늘 값만 쓴다)."""
+    out: list[str] = []
     for market, label in MARKETS:
         rows = flow.get(market) or []
         if rows:
-            out.append(sentence(label, rows[-1]["foreignValue"], rows[-1]["institutionalValue"]))
+            out += ([""] if out else []) + block(label, rows[-1]["foreignValue"], rows[-1]["institutionalValue"])
     return out
 
 
