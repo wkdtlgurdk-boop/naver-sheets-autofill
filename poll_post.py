@@ -20,8 +20,33 @@ import json
 import os
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
-import post_threads as pt
+# post_threads 를 가져오지 않는다. 그쪽은 cards(Pillow)까지 끌고 와서, 의존성을
+# 깔지 않는 이 워크플로가 첫 줄에서 죽는다 (2026-11-28 dry-run 이 그렇게 실패했다).
+API = "https://graph.threads.net/v1.0"
+TEXT_LIMIT = 500
+SETTLE_SECONDS = 10
+
+
+def _request(req: urllib.request.Request, label: str) -> dict:
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="ignore")[:400]
+        raise RuntimeError(f"{e.code} {label}: {body}") from None
+
+
+def get(path: str, params: dict) -> dict:
+    return _request(urllib.request.Request(f"{API}/{path}?{urllib.parse.urlencode(params)}"), path)
+
+
+def call(path: str, params: dict) -> dict:
+    data = urllib.parse.urlencode(params).encode()
+    return _request(urllib.request.Request(f"{API}/{path}", data=data, method="POST"), path)
 
 DEFAULT_TEXT = (
     "멍멍! 주트리버예요 🐕\n"
@@ -52,7 +77,7 @@ def poll_attachment(options: list[str]) -> str:
 
 
 def already_posted(user_id: str, token: str, text: str) -> str | None:
-    doc = pt.get(f"{user_id}/threads",
+    doc = get(f"{user_id}/threads",
                  {"fields": "id,text", "limit": 25, "access_token": token})
     head = text.split("\n", 1)[0]
     for post in doc.get("data") or []:
@@ -68,8 +93,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
     options = args.options or DEFAULT_OPTIONS
-    if len(args.text) > pt.TEXT_LIMIT:
-        print(f"본문이 {pt.TEXT_LIMIT}자를 넘습니다 ({len(args.text)}자)", file=sys.stderr)
+    if len(args.text) > TEXT_LIMIT:
+        print(f"본문이 {TEXT_LIMIT}자를 넘습니다 ({len(args.text)}자)", file=sys.stderr)
         return 1
     attach = poll_attachment(options)
 
@@ -90,11 +115,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[poll] 같은 첫 줄의 글이 이미 있습니다 ({dup}) — 올리지 않습니다.",
               file=sys.stderr)
         return 0
-    got = pt.call(f"{user_id}/threads", {
+    got = call(f"{user_id}/threads", {
         "media_type": "TEXT", "text": args.text,
         "poll_attachment": attach, "access_token": token})
-    time.sleep(pt.SETTLE_SECONDS)
-    pid = pt.call(f"{user_id}/threads_publish", {
+    time.sleep(SETTLE_SECONDS)
+    pid = call(f"{user_id}/threads_publish", {
         "creation_id": got["id"], "access_token": token}).get("id")
     print(f"[poll] 게시 완료 — {pid}")
     return 0
