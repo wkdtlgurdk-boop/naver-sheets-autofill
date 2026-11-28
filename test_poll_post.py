@@ -8,7 +8,7 @@ class PollAttachmentTest(unittest.TestCase):
     def test_default_options_fit(self):
         got = json.loads(poll_post.poll_attachment(poll_post.DEFAULT_OPTIONS))
         self.assertEqual(list(got), ["option_a", "option_b", "option_c", "option_d"])
-        self.assertEqual(got["option_d"], "실적·공시 정리")
+        self.assertEqual(got["option_d"], "핵심종목 실적 공시 정리")
 
     def test_too_few_or_many(self):
         with self.assertRaises(ValueError):
