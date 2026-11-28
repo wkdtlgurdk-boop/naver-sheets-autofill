@@ -31,8 +31,8 @@ jobs:
 
       - name: 투표 글 올리기
         env:
-          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
-          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID || secrets.THREADUSERID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN || secrets.THREADACCESSTOKEN }}
           DRY_RUN: ${{ inputs.dry_run }}
           POLL_TEXT: ${{ inputs.text }}
           POLL_OPTIONS: ${{ inputs.options }}
