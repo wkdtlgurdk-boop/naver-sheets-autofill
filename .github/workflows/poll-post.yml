@@ -1,0 +1,47 @@
+name: poll-post
+
+# 예약 실행 없음. 스레드에 투표 글을 한 건 올리는 손으로 누르는 자리다.
+# 처음에는 dry_run 을 켠 채로 돌려 본문·선택지를 확인한 뒤 끄고 다시 돌린다.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "올리지 않고 내용만 출력 (끄면 실제로 게시)"
+        type: boolean
+        default: true
+      text:
+        description: "본문 (비우면 기본 문구, 500자 이내)"
+        type: string
+        default: ""
+      options:
+        description: "선택지 2~4개를 | 로 구분, 각 25자 이내 (비우면 기본 4개)"
+        type: string
+        default: ""
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 투표 글 올리기
+        env:
+          THREADS_USER_ID: ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          POLL_TEXT: ${{ inputs.text }}
+          POLL_OPTIONS: ${{ inputs.options }}
+        run: |
+          args=()
+          [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+          [ -n "$POLL_TEXT" ] && args+=(--text "$POLL_TEXT")
+          if [ -n "$POLL_OPTIONS" ]; then
+            IFS='|' read -ra opts <<< "$POLL_OPTIONS"
+            for o in "${opts[@]}"; do args+=(--option "$o"); done
+          fi
+          python poll_post.py "${args[@]}"
